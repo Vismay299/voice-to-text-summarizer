@@ -1,0 +1,28 @@
+{
+  "name": "voice-to-text-summarizer",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "npm@11.11.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "predev": "npm run build --workspace @voice/shared",
+    "dev": "concurrently -k -n web,companion \"npm run dev --workspace @voice/web\" \"npm run dev --workspace @voice/companion\"",
+    "dev:web": "npm run dev --workspace @voice/web",
+    "dev:companion": "npm run dev --workspace @voice/companion",
+    "prebuild": "npm run build --workspace @voice/shared",
+    "build": "npm run build --workspace @voice/companion && npm run build --workspace @voice/web",
+    "pretypecheck": "npm run build --workspace @voice/shared",
+    "typecheck": "npm run typecheck --workspace @voice/companion && npm run typecheck --workspace @voice/web",
+    "clean": "npm run clean --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "concurrently": "^9.1.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.6"
+  }
+}

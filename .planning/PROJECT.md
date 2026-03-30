@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Voice-to-Text Summarizer is a web-first application with a desktop companion that listens to live conversations, transcribes them with open-source local models, and generates live notes plus a final summary without relying on paid LLM APIs. It is designed first for a solo professional who wants help during calls, speakerphone conversations, and desktop meetings. Google Meet support is part of the vision, but the dependable core experience is the local/web workflow.
+Voice-to-Text Summarizer is a web-first application with a desktop companion that listens to live conversations, transcribes them with open-source local models, and generates live notes plus a final summary without relying on paid LLM APIs. It is designed first for a solo professional who wants help during calls, speakerphone conversations, and desktop meetings. Google Meet support is part of the vision, but the dependable core experience is the local/web workflow. A separate experimental Google Meet boundary exists for lab testing only and is isolated behind a feature flag.
 
 ## Core Value
 
@@ -12,14 +12,15 @@ Let the user stay fully present in a call while the product captures the convers
 
 ### Validated
 
-(None yet — ship to validate)
+- The stable core flow remains independent from the Google Meet lab boundary.
+- The experimental Google Meet path is feature-flagged, documented, and isolated from normal session handling.
 
 ### Active
 
-- [ ] Reliable live transcription for calls and desktop meetings
-- [ ] Live notes during a session plus a polished final summary at the end
-- [ ] Saved session history with transcripts and summaries
-- [ ] Experimental Google Meet path that does not compromise the stable core product
+- [x] Reliable live transcription for calls and desktop meetings
+- [x] Live notes during a session plus a polished final summary at the end
+- [x] Saved session history with transcripts and summaries
+- [x] Experimental Google Meet path that does not compromise the stable core product
 
 ### Out of Scope
 
@@ -49,7 +50,9 @@ This project starts as a greenfield repository with GSD planning enabled. The pr
 | Open-source local STT + local small LLM summarization | Satisfies the no-paid-API requirement | — Pending |
 | Live notes and final summary in v1 | The user explicitly wants usefulness during and after the call | — Pending |
 | Save transcript and summary history by default | The user wants to revisit prior sessions later | — Pending |
-| Google Meet as dual-track roadmap | Keeps the vision alive without making the main product depend on a risky integration path | — Pending |
+| Google Meet as dual-track roadmap | Keeps the vision alive without making the main product depend on a risky integration path | Implemented |
+| Meeting-helper workflow falls back to browser meeting guidance | Keeps meeting support stable without pretending to ship a true Meet bot | Implemented |
+| Experimental Google Meet boundary behind a feature flag | Lets the project prototype Meet-specific state and failure handling without destabilizing the core app | Implemented |
 
 ---
-*Last updated: 2026-03-30 after GSD project initialization*
+*Last updated: 2026-03-30 after Phase 5 experimental Google Meet completion*

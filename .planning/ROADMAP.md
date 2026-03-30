@@ -12,11 +12,11 @@ This roadmap takes the project from a greenfield workspace to a usable local-fir
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Foundation Runtime** - Establish the app architecture, local bridge, and session bootstrap flow
-- [ ] **Phase 2: Live Transcription Experience** - Deliver real-time transcript streaming and session UX
-- [ ] **Phase 3: Summaries And History** - Add live notes, final summaries, and persisted session review
-- [ ] **Phase 4: Meeting Helper Workflow** - Support browser and desktop meeting capture through a stable helper flow
-- [ ] **Phase 5: Experimental Google Meet Track** - Isolate and prototype a Meet-specific assistant path without destabilizing the core app
+- [x] **Phase 1: Foundation Runtime** - Establish the app architecture, local bridge, and session bootstrap flow
+- [x] **Phase 2: Live Transcription Experience** - Deliver real-time transcript streaming and session UX
+- [x] **Phase 3: Summaries And History** - Add live notes, final summaries, and persisted session review
+- [x] **Phase 4: Meeting Helper Workflow** - Support browser and desktop meeting capture through a stable helper flow
+- [x] **Phase 5: Experimental Google Meet Track** - Isolate and prototype a Meet-specific assistant path without destabilizing the core app
 
 ## Phase Details
 
@@ -31,9 +31,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 3 plans
 
 Plans:
-- [ ] 01-01: Bootstrap repository structure, app shells, and local bridge contract
-- [ ] 01-02: Implement session lifecycle controls and capture-mode configuration
-- [ ] 01-03: Wire local runtime selection and English-first defaults into the product shell
+- [x] 01-01: Bootstrap repository structure, app shells, and local bridge contract
+- [x] 01-02: Implement session lifecycle controls and capture-mode configuration
+- [x] 01-03: Wire local runtime selection and English-first defaults into the product shell
 
 ### Phase 2: Live Transcription Experience
 **Goal**: Deliver streaming transcript updates and a usable live session screen for long-running sessions.
@@ -46,9 +46,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 02-01: Integrate local transcription pipeline with chunked streaming updates
-- [ ] 02-02: Build the live session transcript experience in the web app
-- [ ] 02-03: Harden long-session handling, buffering, and timestamp persistence
+- [x] 02-01: Integrate local transcription pipeline with chunked streaming updates
+- [x] 02-02: Build the live session transcript experience in the web app
+- [x] 02-03: Harden long-session handling, buffering, and timestamp persistence
 
 ### Phase 3: Summaries And History
 **Goal**: Turn transcripts into useful live notes and final summaries, then make completed sessions reviewable later.
@@ -61,9 +61,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 03-01: Add live note generation and final summary orchestration
-- [ ] 03-02: Implement persistence for session transcripts, summaries, and metadata
-- [ ] 03-03: Build history and session detail views with save-behavior controls
+- [x] 03-01: Add live note generation and final summary orchestration
+- [x] 03-02: Implement persistence for session transcripts, summaries, and metadata
+- [x] 03-03: Build history and session detail views with save-behavior controls
 
 ### Phase 4: Meeting Helper Workflow
 **Goal**: Support a stable meeting-oriented workflow that captures desktop or browser meeting context without relying on a true Meet bot.
@@ -76,8 +76,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 04-01: Add meeting-helper input handling for desktop and browser meeting scenarios
-- [ ] 04-02: Add compatibility messaging, fallback guidance, and validation for supported meeting flows
+- [x] 04-01: Add meeting-helper input handling for desktop and browser meeting scenarios
+- [x] 04-02: Add compatibility messaging, fallback guidance, and validation for supported meeting flows
 
 ### Phase 5: Experimental Google Meet Track
 **Goal**: Prototype and isolate a Meet-specific assistant path without making the core product depend on it.
@@ -90,8 +90,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 05-01: Define and prototype the Meet-specific integration boundary behind a feature flag
-- [ ] 05-02: Add isolation, failure handling, and developer documentation for the experimental track
+- [x] 05-01: Define and prototype the Meet-specific integration boundary behind a feature flag
+- [x] 05-02: Add isolation, failure handling, and developer documentation for the experimental track
 
 ## Progress
 
@@ -100,8 +100,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation Runtime | 0/3 | Not started | - |
-| 2. Live Transcription Experience | 0/3 | Not started | - |
-| 3. Summaries And History | 0/3 | Not started | - |
-| 4. Meeting Helper Workflow | 0/2 | Not started | - |
-| 5. Experimental Google Meet Track | 0/2 | Not started | - |
+| 1. Foundation Runtime | 3/3 | Complete | 2026-03-30 |
+| 2. Live Transcription Experience | 3/3 | Complete | 2026-03-30 |
+| 3. Summaries And History | 3/3 | Complete | 2026-03-30 |
+| 4. Meeting Helper Workflow | 2/2 | Complete | 2026-03-30 |
+| 5. Experimental Google Meet Track | 2/2 | Complete | 2026-03-30 |
