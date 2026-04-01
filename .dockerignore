@@ -1,0 +1,11 @@
+.git
+.DS_Store
+.planning
+.voice-to-text-summarizer
+node_modules
+output
+.vite
+dist
+**/dist
+*.tsbuildinfo
+**/*.tsbuildinfo

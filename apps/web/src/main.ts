@@ -18,6 +18,8 @@ import type {
   RuntimeConfigResponse,
   LiveNotesResponse,
   TranscriptResponse,
+  TranscriptIngestRequest,
+  TranscriptIngestResponse,
   SummaryResponse,
   StartSessionRequest,
   StopSessionRequest,
@@ -29,10 +31,17 @@ import type {
   UpdateExperimentalGoogleMeetResponse
 } from "@voice/shared";
 import { BRIDGE_COMMANDS, CAPTURE_MODES, DEFAULT_LANGUAGE, DEFAULT_RUNTIME_CONFIG, MEETING_SURFACES } from "@voice/shared";
+import type {
+  HostedAudioChunkRecord,
+  HostedAudioChunkUploadResponse,
+  HostedSessionCreateResponse as HostedSessionCreateResponseType,
+  HostedSessionRecord as HostedSessionRecordType
+} from "@voice/shared/hosted";
 import "./style.css";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 const companionBaseUrl = "http://localhost:4545";
+const hostedApiBaseUrl = import.meta.env.VITE_HOSTED_API_BASE_URL ?? "http://localhost:8080";
 
 if (!app) {
   throw new Error("App root not found");
@@ -82,7 +91,7 @@ app.innerHTML = `
 
       <article class="card">
         <h2>Session Controls</h2>
-        <p>Start and stop a local session against the desktop companion.</p>
+        <p>Start and stop a hosted microphone capture session or the legacy companion flow.</p>
         <form class="session-form" id="session-form">
           <label>
             <span>Capture mode</span>
@@ -123,6 +132,42 @@ app.innerHTML = `
           <strong>Elapsed time</strong>
           <span id="elapsed-time">00:00</span>
         </div>
+        <div class="status">
+          <strong>Microphone transcription</strong>
+          <span id="mic-status">Waiting to start</span>
+        </div>
+      </article>
+
+      <article class="card hosted-audio-card">
+        <h2>Hosted Microphone Capture</h2>
+        <p class="transcript-note">
+          Speakerphone sessions now create a hosted session on the API and upload raw MediaRecorder chunks sequentially with retry.
+        </p>
+        <div class="transcript-metrics" aria-live="polite">
+          <div class="metric">
+            <strong>Status</strong>
+            <span id="hosted-audio-status">Idle</span>
+          </div>
+          <div class="metric">
+            <strong>Queue</strong>
+            <span id="hosted-audio-queue">0 pending</span>
+          </div>
+          <div class="metric">
+            <strong>Uploaded</strong>
+            <span id="hosted-audio-upload-count">0 chunks</span>
+          </div>
+          <div class="metric">
+            <strong>Storage</strong>
+            <span id="hosted-audio-storage">Awaiting session</span>
+          </div>
+        </div>
+        <div class="status">
+          <strong>Last chunk</strong>
+          <span id="hosted-audio-last-chunk">None uploaded yet.</span>
+        </div>
+        <ol id="hosted-audio-chunk-list" class="transcript-list">
+          <li class="transcript-empty">No hosted audio chunks yet.</li>
+        </ol>
       </article>
 
       <article class="card meeting-card">
@@ -211,7 +256,7 @@ app.innerHTML = `
       <article class="card transcript-card">
         <h2>Transcript Stream</h2>
         <p class="transcript-note">
-          Simulated chunked transcript updates from the companion. Real STT will replace this later.
+          Speakerphone sessions now upload raw microphone chunks to the hosted API. Transcript synthesis comes in the next series.
         </p>
         <div class="transcript-metrics" aria-live="polite">
           <div class="metric">
@@ -239,7 +284,7 @@ app.innerHTML = `
       <article class="card notes-card">
         <h2>Live Notes</h2>
         <p class="transcript-note">
-          Simulated notes derived from the active transcript chunks.
+          Notes are derived from the captured transcript chunks.
         </p>
         <div class="transcript-metrics" aria-live="polite">
           <div class="metric">
@@ -345,6 +390,7 @@ const runtimeOptionsLabel = document.querySelector<HTMLElement>("#runtime-option
 const defaultLanguageLabel = document.querySelector<HTMLElement>("#default-language");
 const selectedModeLabel = document.querySelector<HTMLElement>("#selected-mode");
 const elapsedTimeLabel = document.querySelector<HTMLElement>("#elapsed-time");
+const micStatusLabel = document.querySelector<HTMLElement>("#mic-status");
 const sessionSummaryLabel = document.querySelector<HTMLElement>("#session-summary");
 const sessionJsonOutput = document.querySelector<HTMLElement>("#session-json");
 const transcriptStatusLabel = document.querySelector<HTMLElement>("#transcript-status");
@@ -352,6 +398,12 @@ const transcriptChunkCountLabel = document.querySelector<HTMLElement>("#transcri
 const transcriptRevisionLabel = document.querySelector<HTMLElement>("#transcript-revision");
 const transcriptUpdatedLabel = document.querySelector<HTMLElement>("#transcript-updated");
 const transcriptList = document.querySelector<HTMLOListElement>("#transcript-list");
+const hostedAudioStatusLabel = document.querySelector<HTMLElement>("#hosted-audio-status");
+const hostedAudioQueueLabel = document.querySelector<HTMLElement>("#hosted-audio-queue");
+const hostedAudioUploadCountLabel = document.querySelector<HTMLElement>("#hosted-audio-upload-count");
+const hostedAudioStorageLabel = document.querySelector<HTMLElement>("#hosted-audio-storage");
+const hostedAudioLastChunkLabel = document.querySelector<HTMLElement>("#hosted-audio-last-chunk");
+const hostedAudioChunkList = document.querySelector<HTMLOListElement>("#hosted-audio-chunk-list");
 const notesStatusLabel = document.querySelector<HTMLElement>("#notes-status");
 const notesCountLabel = document.querySelector<HTMLElement>("#notes-count");
 const notesRevisionLabel = document.querySelector<HTMLElement>("#notes-revision");
@@ -397,6 +449,7 @@ if (
   !defaultLanguageLabel ||
   !selectedModeLabel ||
   !elapsedTimeLabel ||
+  !micStatusLabel ||
   !sessionSummaryLabel ||
   !sessionJsonOutput ||
   !transcriptStatusLabel ||
@@ -404,6 +457,12 @@ if (
   !transcriptRevisionLabel ||
   !transcriptUpdatedLabel ||
   !transcriptList ||
+  !hostedAudioStatusLabel ||
+  !hostedAudioQueueLabel ||
+  !hostedAudioUploadCountLabel ||
+  !hostedAudioStorageLabel ||
+  !hostedAudioLastChunkLabel ||
+  !hostedAudioChunkList ||
   !notesStatusLabel ||
   !notesCountLabel ||
   !notesRevisionLabel ||
@@ -449,6 +508,7 @@ const runtimeOptionsDisplay = runtimeOptionsLabel;
 const defaultLanguageDisplay = defaultLanguageLabel;
 const selectedModeDisplay = selectedModeLabel;
 const elapsedLabel = elapsedTimeLabel;
+const micStatus = micStatusLabel;
 const summaryLabel = sessionSummaryLabel;
 const sessionJson = sessionJsonOutput;
 const transcriptStatus = transcriptStatusLabel;
@@ -505,6 +565,88 @@ let archivedSessions: SessionArchiveEntry[] = [];
 let selectedArchiveSessionId: string | null = null;
 let meetingHelperState: MeetingHelperResponse["meetingHelper"] | null = null;
 let selectedMeetingSurface: MeetingSurface = "desktop-meeting";
+let hostedSession: HostedSessionRecordType | null = null;
+let hostedUploadQueue: HostedAudioUploadJob[] = [];
+let hostedUploadInFlight = false;
+let hostedUploadErrorCount = 0;
+let hostedUploadRetryTimerId: number | null = null;
+let hostedCaptureStream: MediaStream | null = null;
+let hostedMediaRecorder: MediaRecorder | null = null;
+let hostedUploadStartedAtMs = 0;
+let hostedUploadLastChunkEndAtMs = 0;
+let hostedUploadNextChunkIndex = 0;
+let hostedUploadedChunkCount = 0;
+let hostedUploadStatus = "Idle";
+let hostedCaptureActive = false;
+let hostedRecorderMimeType = "audio/webm";
+let browserSpeechRecognition: BrowserSpeechRecognition | null = null;
+let browserSpeechRecognitionSessionId: string | null = null;
+let browserSpeechRecognitionNextResultIndex = 0;
+let browserSpeechRecognitionCursorMs = 0;
+let browserSpeechRecognitionRestartTimerId: number | null = null;
+let browserSpeechRecognitionStatus = "Waiting to start";
+let browserSpeechRecognitionShouldRestart = false;
+let browserSpeechRecognitionStopping = false;
+let browserSpeechRecognitionStopResolve: (() => void) | null = null;
+const pendingTranscriptAppendPromises = new Set<Promise<unknown>>();
+
+interface BrowserSpeechRecognitionAlternative {
+  transcript: string;
+  confidence: number;
+}
+
+interface BrowserSpeechRecognitionResult extends ArrayLike<BrowserSpeechRecognitionAlternative> {
+  isFinal: boolean;
+  length: number;
+  [index: number]: BrowserSpeechRecognitionAlternative;
+}
+
+interface BrowserSpeechRecognitionResultList extends ArrayLike<BrowserSpeechRecognitionResult> {
+  length: number;
+  [index: number]: BrowserSpeechRecognitionResult;
+}
+
+interface BrowserSpeechRecognitionEvent extends Event {
+  resultIndex: number;
+  results: BrowserSpeechRecognitionResultList;
+}
+
+interface BrowserSpeechRecognitionErrorEvent extends Event {
+  error: string;
+  message: string;
+}
+
+interface BrowserSpeechRecognition {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  maxAlternatives: number;
+  onresult: ((event: BrowserSpeechRecognitionEvent) => void) | null;
+  onerror: ((event: BrowserSpeechRecognitionErrorEvent) => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+  stop(): void;
+  abort(): void;
+}
+
+interface BrowserSpeechRecognitionWindow extends Window {
+  SpeechRecognition?: new () => BrowserSpeechRecognition;
+  webkitSpeechRecognition?: new () => BrowserSpeechRecognition;
+}
+
+interface HostedAudioUploadJob {
+  chunkIndex: number;
+  blob: Blob;
+  startedAt: string;
+  endedAt: string;
+  attempts: number;
+}
+
+interface HostedSessionStopResponse {
+  session: HostedSessionRecordType;
+  audioChunkCount: number;
+  repositoryBackend: string;
+}
 
 function formatElapsedTime(seconds: number) {
   const minutes = Math.floor(seconds / 60)
@@ -558,6 +700,7 @@ function renderSession(session: SessionRecord | null) {
     stopElapsedTimer();
     stopButton.disabled = true;
     startButton.disabled = false;
+    setMicStatus("Waiting to start");
     return;
   }
 
@@ -641,6 +784,478 @@ function formatExperimentalGoogleMeetStatus(status: ExperimentalGoogleMeetState[
     case "prototype":
       return "Prototype enabled";
   }
+}
+
+function setMicStatus(message: string) {
+  browserSpeechRecognitionStatus = message;
+  micStatus.textContent = message;
+}
+
+function setHostedAudioStatus(message: string) {
+  hostedUploadStatus = message;
+  hostedAudioStatusLabel.textContent = message;
+}
+
+function createMirrorSessionFromHosted(session: HostedSessionRecordType): SessionRecord {
+  return {
+    id: session.id,
+    sourceType: "speakerphone",
+    runtimeId: selectedRuntimeId,
+    status: session.status === "complete" ? "complete" : session.status === "failed" ? "error" : "recording",
+    startedAt: session.startedAt ?? session.createdAt,
+    endedAt: session.endedAt ?? undefined,
+    language: defaultLanguage,
+    saveTranscript: saveTranscriptEl.checked,
+    saveSummary: saveSummaryEl.checked
+  };
+}
+
+function renderHostedSessionState(session: HostedSessionRecordType | null) {
+  hostedSession = session;
+
+  if (!session) {
+    renderSession(null);
+    sessionJson.textContent = "Waiting for hosted session...";
+    return;
+  }
+
+  renderSession(createMirrorSessionFromHosted(session));
+  sessionJson.textContent = JSON.stringify(
+    {
+      transport: "hosted-api",
+      apiBaseUrl: hostedApiBaseUrl,
+      session
+    },
+    null,
+    2
+  );
+}
+
+function renderHostedRoadmapPlaceholders() {
+  selectedRuntimeDisplay.textContent = "Hosted workers planned";
+  runtimeOptionsDisplay.textContent = "Series 4 will run faster-whisper large-v3-turbo. Series 6 will add Qwen2.5 summaries.";
+  defaultLanguageDisplay.textContent = DEFAULT_LANGUAGE.toUpperCase();
+  runtimeSelectEl.disabled = true;
+  saveRuntimeEl.disabled = true;
+
+  meetingRoute.textContent = "Deferred to Series 8";
+  meetingStatus.textContent = "Prototype only";
+  meetingFallbackStatus.textContent = "Hosted MVP is microphone-first.";
+  meetingActive.textContent = "No";
+  meetingGuidance.innerHTML = `
+    <li>Series 3 only supports browser microphone capture on the hosted path.</li>
+    <li>System audio and meeting capture remain deferred until Series 8.</li>
+  `;
+  applyMeetingHelper.disabled = true;
+  meetingFallback.disabled = true;
+  meetingSurface.disabled = true;
+
+  experimentalGoogleMeetFlag.textContent = "Deferred";
+  experimentalGoogleMeetStatus.textContent = "Not in MVP";
+  experimentalGoogleMeetAvailability.textContent = "Unavailable";
+  experimentalGoogleMeetActive.textContent = "No";
+  experimentalGoogleMeetEnabled.checked = false;
+  experimentalGoogleMeetEnabled.disabled = true;
+  saveExperimentalGoogleMeetButtonEl.disabled = true;
+  refreshExperimentalGoogleMeetButtonEl.disabled = true;
+  experimentalGoogleMeetErrorLabel.textContent =
+    "Experimental Google Meet work stays out of the hosted MVP until after microphone ingestion, ASR, and summaries are stable.";
+  experimentalGoogleMeetNotesList.innerHTML = `
+    <li>Series 3 is focused on browser microphone capture.</li>
+    <li>Meet-specific routing comes later and is not part of the current hosted path.</li>
+  `;
+
+  renderTranscriptState("Transcript delivery begins in Series 4 once the ASR worker is wired.", []);
+  renderNotesState("Live notes begin in Series 6 after transcript windows are persisted.", {
+    sessionId: null,
+    revision: 0,
+    updatedAt: null,
+    noteCount: 0,
+    isSimulated: false,
+    isActive: false,
+    notes: []
+  });
+  renderSummaryState("Final summary begins in Series 6 after the hosted LLM worker is wired.", null);
+
+  historyCount.textContent = "0";
+  historyStatus.textContent = "Hosted session history arrives in Series 7";
+  historyListEl.innerHTML = '<li class="transcript-empty">Hosted history will move to PostgreSQL-backed review screens in Series 7.</li>';
+  historyDetailEl.innerHTML =
+    "<p>Series 3 stores sessions and audio chunks. Transcript review lands after ASR and history retrieval are wired.</p>";
+}
+
+function formatByteSize(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "0 B";
+  }
+
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+
+  const precision = unitIndex === 0 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(precision)} ${units[unitIndex]}`;
+}
+
+function resetHostedAudioUi() {
+  hostedUploadQueue = [];
+  hostedUploadInFlight = false;
+  hostedUploadErrorCount = 0;
+  hostedUploadNextChunkIndex = 0;
+  hostedUploadStartedAtMs = 0;
+  hostedUploadLastChunkEndAtMs = 0;
+  hostedUploadedChunkCount = 0;
+  hostedCaptureActive = false;
+  hostedAudioQueueLabel.textContent = "0 pending";
+  hostedAudioUploadCountLabel.textContent = "0 chunks";
+  hostedAudioStorageLabel.textContent = "Awaiting session";
+  hostedAudioLastChunkLabel.textContent = "None uploaded yet.";
+  hostedAudioChunkList.innerHTML = '<li class="transcript-empty">No hosted audio chunks yet.</li>';
+  setHostedAudioStatus("Idle");
+}
+
+function renderHostedAudioChunkList(chunks: readonly HostedAudioChunkRecord[]) {
+  hostedAudioChunkList.innerHTML = "";
+
+  if (chunks.length === 0) {
+    const emptyItem = document.createElement("li");
+    emptyItem.className = "transcript-empty";
+    emptyItem.textContent = "No hosted audio chunks yet.";
+    hostedAudioChunkList.appendChild(emptyItem);
+    return;
+  }
+
+  for (const chunk of chunks) {
+    const item = document.createElement("li");
+    item.className = "transcript-item";
+    item.innerHTML = `
+      <div class="transcript-meta">
+        <strong>Chunk ${chunk.chunkIndex.toString().padStart(3, "0")}</strong>
+        <span>${new Date(chunk.createdAt).toLocaleTimeString()}</span>
+      </div>
+      <p>${chunk.objectPath}</p>
+    `;
+    hostedAudioChunkList.appendChild(item);
+  }
+}
+
+async function refreshHostedAudioChunks(sessionId: string) {
+  const payload = await requestJsonFromBase<{
+    sessionId: string;
+    repositoryBackend: string;
+    audioChunks: HostedAudioChunkRecord[];
+  }>(hostedApiBaseUrl, `/sessions/${encodeURIComponent(sessionId)}/audio-chunks`);
+
+  hostedAudioUploadCountLabel.textContent = `${payload.audioChunks.length} chunk${payload.audioChunks.length === 1 ? "" : "s"}`;
+  hostedAudioQueueLabel.textContent = `${hostedUploadQueue.length}${hostedUploadInFlight ? " queued, 1 uploading" : " pending"}`;
+  if (payload.audioChunks.length === 0) {
+    hostedAudioStorageLabel.textContent =
+      payload.repositoryBackend === "postgres" ? "Cloud SQL metadata + object storage" : "Dev filesystem mirror";
+  }
+  hostedAudioLastChunkLabel.textContent =
+    payload.audioChunks.at(-1) !== undefined
+      ? `${payload.audioChunks.at(-1)?.objectPath} • ${formatByteSize(Number(payload.audioChunks.at(-1)?.metadata.byteLength ?? 0))}`
+      : "None uploaded yet.";
+  renderHostedAudioChunkList(payload.audioChunks);
+}
+
+function getHostedMicrophoneConstructor() {
+  return window.MediaRecorder ?? null;
+}
+
+function resolveHostedMimeType() {
+  const constructor = getHostedMicrophoneConstructor();
+  if (!constructor?.isTypeSupported) {
+    return "";
+  }
+
+  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
+  return candidates.find((candidate) => constructor.isTypeSupported(candidate)) ?? "";
+}
+
+function supportsHostedMicrophoneCapture() {
+  return typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia) && Boolean(getHostedMicrophoneConstructor());
+}
+
+function stopHostedUploadRetryTimer() {
+  if (hostedUploadRetryTimerId !== null) {
+    window.clearTimeout(hostedUploadRetryTimerId);
+    hostedUploadRetryTimerId = null;
+  }
+}
+
+async function stopHostedCaptureStream() {
+  if (hostedMediaRecorder && hostedMediaRecorder.state !== "inactive") {
+    const recorder = hostedMediaRecorder;
+    await new Promise<void>((resolve) => {
+      const previousOnStop = recorder.onstop;
+      recorder.onstop = () => {
+        previousOnStop?.call(recorder, new Event("stop"));
+        resolve();
+      };
+      try {
+        recorder.requestData();
+        recorder.stop();
+      } catch {
+        resolve();
+      }
+    });
+  }
+
+  hostedMediaRecorder = null;
+
+  if (hostedCaptureStream) {
+    hostedCaptureStream.getTracks().forEach((track) => track.stop());
+    hostedCaptureStream = null;
+  }
+}
+
+async function createHostedSession(sourceType: "microphone") {
+  return requestJsonFromBase<HostedSessionCreateResponseType>(hostedApiBaseUrl, "/sessions", {
+    method: "POST",
+    body: JSON.stringify({
+      sourceType
+    })
+  });
+}
+
+async function stopHostedSession(sessionId: string) {
+  return requestJsonFromBase<HostedSessionStopResponse>(hostedApiBaseUrl, `/sessions/${encodeURIComponent(sessionId)}/stop`, {
+    method: "POST"
+  });
+}
+
+function updateHostedAudioQueueUi() {
+  hostedAudioQueueLabel.textContent = `${hostedUploadQueue.length}${hostedUploadInFlight ? " pending, 1 uploading" : " pending"}`;
+}
+
+function queueHostedAudioChunk(blob: Blob, startedAtMs: number, endedAtMs: number) {
+  const chunkIndex = hostedUploadNextChunkIndex++;
+  const job: HostedAudioUploadJob = {
+    chunkIndex,
+    blob,
+    startedAt: new Date(startedAtMs).toISOString(),
+    endedAt: new Date(endedAtMs).toISOString(),
+    attempts: 0
+  };
+  hostedUploadQueue.push(job);
+  updateHostedAudioQueueUi();
+  setHostedAudioStatus(`Queued chunk ${String(chunkIndex).padStart(3, "0")} for upload.`);
+  void processHostedUploadQueue();
+}
+
+async function uploadHostedAudioChunk(sessionId: string, job: HostedAudioUploadJob) {
+  const response = await fetch(`${hostedApiBaseUrl}/sessions/${encodeURIComponent(sessionId)}/audio-chunks`, {
+    method: "POST",
+    headers: {
+      "content-type": job.blob.type || hostedRecorderMimeType || "audio/webm",
+      "x-audio-chunk-index": String(job.chunkIndex),
+      "x-audio-chunk-started-at": job.startedAt,
+      "x-audio-chunk-ended-at": job.endedAt
+    },
+    body: job.blob
+  });
+
+  const payload = (await response.json()) as HostedAudioChunkUploadResponse & { audioChunkCount?: number } | SessionError;
+  if (!response.ok) {
+    throw new Error((payload as SessionError).message ?? "Unable to upload audio chunk");
+  }
+
+  return payload as HostedAudioChunkUploadResponse & { audioChunkCount?: number };
+}
+
+async function processHostedUploadQueue() {
+  if (hostedUploadInFlight || !hostedSession) {
+    return;
+  }
+
+  const nextJob = hostedUploadQueue.shift();
+  updateHostedAudioQueueUi();
+
+  if (!nextJob) {
+    setHostedAudioStatus(hostedCaptureActive ? "Awaiting new audio chunks." : "All queued audio chunks uploaded.");
+    return;
+  }
+
+  hostedUploadInFlight = true;
+  updateHostedAudioQueueUi();
+  setHostedAudioStatus(`Uploading chunk ${String(nextJob.chunkIndex).padStart(3, "0")}...`);
+
+  try {
+    const response = await uploadHostedAudioChunk(hostedSession.id, nextJob);
+    const storageLabel = `${response.storageMode} • ${formatByteSize(response.storedBytes)}`;
+    hostedAudioStorageLabel.textContent = storageLabel;
+    hostedAudioLastChunkLabel.textContent = `${response.chunk.objectPath} • ${storageLabel}`;
+    hostedUploadedChunkCount = Math.max(hostedUploadedChunkCount, nextJob.chunkIndex + 1);
+    hostedAudioUploadCountLabel.textContent = `${hostedUploadedChunkCount} chunk${hostedUploadedChunkCount === 1 ? "" : "s"}`;
+    await refreshHostedAudioChunks(hostedSession.id);
+    setHostedAudioStatus(`Chunk ${String(nextJob.chunkIndex).padStart(3, "0")} uploaded.`);
+    hostedUploadErrorCount = 0;
+  } catch (error) {
+    nextJob.attempts += 1;
+    hostedUploadErrorCount += 1;
+    if (nextJob.attempts < 3) {
+      const retryDelayMs = Math.min(5000, 500 * 2 ** (nextJob.attempts - 1));
+      setHostedAudioStatus(`Retrying chunk ${String(nextJob.chunkIndex).padStart(3, "0")} in ${Math.round(retryDelayMs / 1000)}s.`);
+      hostedUploadRetryTimerId = window.setTimeout(() => {
+        hostedUploadRetryTimerId = null;
+        hostedUploadQueue.unshift(nextJob);
+        hostedUploadInFlight = false;
+        updateHostedAudioQueueUi();
+        void processHostedUploadQueue();
+      }, retryDelayMs);
+      return;
+    }
+
+    setHostedAudioStatus(error instanceof Error ? error.message : "Audio chunk upload failed.");
+    hostedAudioLastChunkLabel.textContent = `Chunk ${String(nextJob.chunkIndex).padStart(3, "0")} failed after ${nextJob.attempts} attempts.`;
+  } finally {
+    hostedUploadInFlight = false;
+    updateHostedAudioQueueUi();
+    if (hostedUploadQueue.length > 0 && hostedUploadRetryTimerId === null) {
+      void processHostedUploadQueue();
+    }
+  }
+}
+
+async function startHostedMicrophoneCapture() {
+  if (hostedCaptureActive) {
+    return;
+  }
+
+  if (!supportsHostedMicrophoneCapture()) {
+    throw new Error("This browser does not support MediaRecorder microphone capture.");
+  }
+
+  stopHostedUploadRetryTimer();
+  resetHostedAudioUi();
+  try {
+    setHostedAudioStatus("Requesting microphone access...");
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    hostedCaptureStream = stream;
+
+    setHostedAudioStatus("Creating hosted session...");
+    const hostedSessionResponse = await createHostedSession("microphone");
+    hostedSession = hostedSessionResponse.session;
+    renderHostedSessionState(hostedSessionResponse.session);
+    hostedCaptureActive = true;
+    stopTranscriptPolling();
+    stopNotesPolling();
+    renderHostedCapturePlaceholders();
+    hostedUploadStartedAtMs = Date.now();
+    hostedUploadLastChunkEndAtMs = hostedUploadStartedAtMs;
+    hostedAudioStorageLabel.textContent = "Awaiting first upload";
+    hostedAudioLastChunkLabel.textContent = "Capture ready.";
+    hostedAudioQueueLabel.textContent = "0 pending";
+    hostedAudioUploadCountLabel.textContent = "0 chunks";
+    setHostedAudioStatus(`Hosted session ${hostedSession.id} ready. Starting recorder...`);
+
+    const Recorder = getHostedMicrophoneConstructor();
+    if (!Recorder) {
+      throw new Error("MediaRecorder is not available in this browser.");
+    }
+
+    hostedRecorderMimeType = resolveHostedMimeType() || "audio/webm";
+    const recorder = hostedRecorderMimeType ? new Recorder(stream, { mimeType: hostedRecorderMimeType }) : new Recorder(stream);
+    hostedMediaRecorder = recorder;
+
+    recorder.ondataavailable = (event) => {
+      if (!hostedCaptureActive || !hostedSession) {
+        return;
+      }
+
+      if (!event.data || event.data.size === 0) {
+        return;
+      }
+
+      const now = Date.now();
+      const startedAtMs = hostedUploadLastChunkEndAtMs || hostedUploadStartedAtMs;
+      const endedAtMs = Math.max(now, startedAtMs + 250);
+      hostedUploadLastChunkEndAtMs = endedAtMs;
+      queueHostedAudioChunk(event.data, startedAtMs, endedAtMs);
+    };
+
+    recorder.onerror = (event) => {
+      setHostedAudioStatus(`Recorder error: ${event.error ?? "unknown error"}`);
+    };
+
+    recorder.onstart = () => {
+      setHostedAudioStatus("Capturing microphone audio...");
+      hostedAudioStorageLabel.textContent = "Awaiting first upload";
+    };
+
+    recorder.start(5000);
+    void refreshHostedAudioChunks(hostedSession.id).catch(() => {
+      setHostedAudioStatus("Capture started. Waiting for chunk list refresh.");
+    });
+  } catch (error) {
+    hostedCaptureActive = false;
+    await stopHostedCaptureStream();
+    if (hostedSession) {
+      await stopHostedSession(hostedSession.id).catch(() => {
+        // If cleanup fails, the session is still visible in the hosted API for debugging.
+      });
+      hostedSession = null;
+    }
+    renderSession(null);
+    throw error instanceof Error ? error : new Error("Unable to start MediaRecorder.");
+  }
+}
+
+async function stopHostedMicrophoneCapture() {
+  await stopHostedCaptureStream();
+
+  if (hostedUploadInFlight || hostedUploadQueue.length > 0 || hostedUploadRetryTimerId !== null) {
+    setHostedAudioStatus("Waiting for queued uploads to finish...");
+    while (hostedUploadInFlight || hostedUploadQueue.length > 0 || hostedUploadRetryTimerId !== null) {
+      await new Promise((resolve) => window.setTimeout(resolve, 150));
+    }
+  }
+
+  if (hostedSession) {
+    const response = await stopHostedSession(hostedSession.id);
+    hostedSession = response.session;
+    renderHostedSessionState(response.session);
+    await refreshHostedAudioChunks(hostedSession.id).catch(() => {
+      // Keep the stop flow resilient if the final refresh fails.
+    });
+  }
+
+  hostedCaptureActive = false;
+  setHostedAudioStatus("Microphone capture stopped.");
+}
+
+function getBrowserSpeechRecognitionConstructor() {
+  const speechWindow = window as BrowserSpeechRecognitionWindow;
+  return speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition ?? null;
+}
+
+function supportsBrowserSpeechRecognition() {
+  return getBrowserSpeechRecognitionConstructor() !== null;
+}
+
+function normalizeTranscriptText(text: string) {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function estimateTranscriptSegmentDurationMs(text: string) {
+  const wordCount = normalizeTranscriptText(text)
+    .split(/\s+/)
+    .filter(Boolean).length;
+  return Math.max(1200, Math.min(6000, wordCount * 350));
+}
+
+function shortenTranscriptText(text: string, maxLength = 120) {
+  const normalized = normalizeTranscriptText(text);
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
 function updateTranscriptMetrics(transcript: TranscriptResponse["transcript"]) {
@@ -826,6 +1441,34 @@ function renderSummaryState(message: string, summary: FinalSummary | null) {
   });
 }
 
+function renderHostedCapturePlaceholders() {
+  renderTranscriptState("Hosted audio upload active. Transcript generation comes in the next series.", []);
+  renderNotesState("Waiting for transcription pipeline.", {
+    sessionId: null,
+    revision: 0,
+    updatedAt: null,
+    noteCount: 0,
+    isSimulated: false,
+    isActive: false,
+    notes: []
+  });
+  renderSummaryState("Waiting for transcription and summarization.", null);
+}
+
+function renderHostedCaptureCompletionPlaceholders() {
+  renderTranscriptState("Hosted audio upload complete. Stored chunks are ready for Series 4 transcription.", []);
+  renderNotesState("Hosted session complete. Live notes begin in Series 6.", {
+    sessionId: null,
+    revision: 0,
+    updatedAt: null,
+    noteCount: 0,
+    isSimulated: false,
+    isActive: false,
+    notes: []
+  });
+  renderSummaryState("Hosted session complete. Final summaries begin in Series 6.", null);
+}
+
 function renderArchiveDetail(entry: SessionArchiveEntry | null) {
   if (!entry) {
     historyStatus.textContent = "None selected";
@@ -916,10 +1559,267 @@ function renderArchiveList(entries: SessionArchiveEntry[]) {
   }
 }
 
+function stopBrowserSpeechRecognition() {
+  if (browserSpeechRecognitionRestartTimerId !== null) {
+    window.clearTimeout(browserSpeechRecognitionRestartTimerId);
+    browserSpeechRecognitionRestartTimerId = null;
+  }
+
+  if (!browserSpeechRecognition) {
+    return;
+  }
+
+  const recognition = browserSpeechRecognition;
+  browserSpeechRecognition = null;
+  browserSpeechRecognitionSessionId = null;
+  browserSpeechRecognitionNextResultIndex = 0;
+  browserSpeechRecognitionCursorMs = 0;
+  browserSpeechRecognitionShouldRestart = false;
+  browserSpeechRecognitionStopping = false;
+  browserSpeechRecognitionStopResolve?.();
+  browserSpeechRecognitionStopResolve = null;
+
+  try {
+    recognition.onresult = null;
+    recognition.onerror = null;
+    recognition.onend = null;
+    recognition.abort();
+  } catch {
+    // Ignore stop/abort errors from browsers that reject when recognition already ended.
+  }
+}
+
+async function flushBrowserSpeechRecognition() {
+  if (!browserSpeechRecognition) {
+    return;
+  }
+
+  browserSpeechRecognitionShouldRestart = false;
+  browserSpeechRecognitionStopping = true;
+  setMicStatus("Finishing microphone transcription...");
+
+  await new Promise<void>((resolve) => {
+    browserSpeechRecognitionStopResolve = resolve;
+
+    try {
+      browserSpeechRecognition?.stop();
+    } catch {
+      browserSpeechRecognitionStopResolve = null;
+      resolve();
+    }
+  });
+
+  if (pendingTranscriptAppendPromises.size > 0) {
+    await Promise.allSettled(Array.from(pendingTranscriptAppendPromises));
+  }
+}
+
+async function appendBrowserTranscriptSegments(sessionId: string, segments: readonly TranscriptIngestRequest["segments"]) {
+  const payload: TranscriptIngestRequest = {
+    sessionId,
+    segments
+  };
+
+  const response = await requestJson<TranscriptIngestResponse>("/transcript/append", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+
+  const transcript = response.transcript;
+  const notes = response.notes;
+  const summary = response.summary;
+  const incomingSegments = transcript.segments.slice(transcriptSegments.length);
+
+  if (incomingSegments.length > 0) {
+    transcriptSegments = [...transcriptSegments, ...incomingSegments];
+    renderTranscriptState(
+      `${transcript.isActive ? "Live transcript" : "Transcript paused"}${transcript.isSimulated ? " (simulated)" : ""} • revision ${transcript.revision}`,
+      incomingSegments,
+      true
+    );
+  }
+
+  transcriptRevision = transcript.revision;
+  updateTranscriptMetrics(transcript);
+  notesRevision = notes.revision;
+  updateNotesMetrics(notes);
+  renderNotesState(
+    `${notes.isActive ? "Live notes" : "Notes paused"}${notes.isSimulated ? " (simulated)" : ""} • revision ${notes.revision}`,
+    notes
+  );
+
+  if (summary.isReady && summary.summary) {
+    currentSummary = summary.summary;
+    renderSummaryState(
+      `${summary.isSimulated ? "Simulated summary" : "Live summary"} ready • revision ${summary.revision}`,
+      summary.summary
+    );
+  }
+}
+
+function startBrowserSpeechRecognition(session: SessionRecord) {
+  stopBrowserSpeechRecognition();
+
+  const SpeechRecognition = getBrowserSpeechRecognitionConstructor();
+  if (!SpeechRecognition) {
+    setMicStatus("Browser speech recognition is not available in this browser.");
+    renderError("This browser does not support live microphone transcription.");
+    return;
+  }
+
+  if (session.sourceType !== "speakerphone") {
+    setMicStatus("Microphone transcription is only active for speakerphone sessions.");
+    return;
+  }
+
+  const recognition = new SpeechRecognition();
+  browserSpeechRecognition = recognition;
+  browserSpeechRecognitionSessionId = session.id;
+  browserSpeechRecognitionNextResultIndex = 0;
+  browserSpeechRecognitionCursorMs = 0;
+  browserSpeechRecognitionShouldRestart = true;
+  browserSpeechRecognitionStopping = false;
+
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.maxAlternatives = 1;
+  recognition.lang = "en-US";
+
+  recognition.onresult = (event) => {
+    if (!currentSession || currentSession.id !== session.id || currentSession.status !== "recording") {
+      return;
+    }
+
+    const appendedSegments: Array<{ text: string; startMs?: number; endMs?: number; confidence?: number; speakerLabel?: string }> = [];
+
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const result = event.results[index];
+      if (!result.isFinal || index < browserSpeechRecognitionNextResultIndex) {
+        continue;
+      }
+
+      const alternative = result[0];
+      const text = normalizeTranscriptText(alternative?.transcript ?? "");
+      if (!text) {
+        browserSpeechRecognitionNextResultIndex = index + 1;
+        continue;
+      }
+
+      const estimatedDurationMs = estimateTranscriptSegmentDurationMs(text);
+      const sessionElapsedMs = Math.max(0, Date.now() - new Date(session.startedAt).getTime());
+      const endMs = Math.max(browserSpeechRecognitionCursorMs + 150, sessionElapsedMs);
+      const startMs = Math.max(browserSpeechRecognitionCursorMs + 150, endMs - estimatedDurationMs);
+      browserSpeechRecognitionCursorMs = Math.max(browserSpeechRecognitionCursorMs, endMs);
+      appendedSegments.push({
+        text,
+        startMs,
+        endMs,
+        confidence: alternative?.confidence,
+        speakerLabel: "Speaker 1"
+      });
+      browserSpeechRecognitionNextResultIndex = index + 1;
+    }
+
+    if (appendedSegments.length === 0) {
+      return;
+    }
+
+    setMicStatus(`Submitting ${appendedSegments.length} transcript segment${appendedSegments.length === 1 ? "" : "s"}...`);
+    const appendPromise = appendBrowserTranscriptSegments(session.id, appendedSegments)
+      .then(() => {
+        setMicStatus("Listening for speech...");
+      })
+      .catch((error) => {
+        setMicStatus(error instanceof Error ? error.message : "Unable to append transcript segment.");
+      })
+      .finally(() => {
+        pendingTranscriptAppendPromises.delete(appendPromise);
+      });
+    pendingTranscriptAppendPromises.add(appendPromise);
+  };
+
+  recognition.onerror = (event) => {
+    if (!currentSession || currentSession.id !== session.id || currentSession.status !== "recording") {
+      return;
+    }
+
+    const message = event.message ? `${event.error}: ${event.message}` : event.error;
+    setMicStatus(message);
+    if (event.error !== "no-speech" && event.error !== "aborted") {
+      renderError(`Microphone transcription error: ${message}`);
+    }
+  };
+
+  recognition.onend = () => {
+    if (browserSpeechRecognitionStopping) {
+      browserSpeechRecognitionStopping = false;
+      browserSpeechRecognitionStopResolve?.();
+      browserSpeechRecognitionStopResolve = null;
+      setMicStatus("Microphone transcription stopped.");
+      return;
+    }
+
+    if (!currentSession || currentSession.id !== session.id || currentSession.status !== "recording") {
+      setMicStatus("Microphone transcription stopped.");
+      return;
+    }
+
+    if (!browserSpeechRecognitionShouldRestart) {
+      setMicStatus("Microphone transcription stopped.");
+      return;
+    }
+
+    if (browserSpeechRecognitionRestartTimerId !== null) {
+      window.clearTimeout(browserSpeechRecognitionRestartTimerId);
+    }
+
+    browserSpeechRecognitionRestartTimerId = window.setTimeout(() => {
+      if (!currentSession || currentSession.id !== session.id || currentSession.status !== "recording") {
+        return;
+      }
+
+      try {
+        browserSpeechRecognitionNextResultIndex = 0;
+        recognition.start();
+        setMicStatus("Listening for speech...");
+      } catch (error) {
+        setMicStatus(error instanceof Error ? error.message : "Unable to restart speech recognition.");
+      }
+    }, 300);
+  };
+
+  try {
+    recognition.start();
+    setMicStatus("Listening for speech...");
+  } catch (error) {
+    setMicStatus(error instanceof Error ? error.message : "Unable to start speech recognition.");
+    renderError(error instanceof Error ? error.message : "Unable to start speech recognition.");
+    stopBrowserSpeechRecognition();
+  }
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${companionBaseUrl}${path}`, {
     headers: {
       "content-type": "application/json"
+    },
+    ...init
+  });
+
+  const data = (await response.json()) as T | SessionError;
+
+  if (!response.ok) {
+    throw new Error((data as SessionError).message ?? "Request failed");
+  }
+
+  return data as T;
+}
+
+async function requestJsonFromBase<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${baseUrl}${path}`, {
+    headers: {
+      "content-type": "application/json",
+      ...(init?.headers ?? {})
     },
     ...init
   });
@@ -938,7 +1838,9 @@ async function refreshSession() {
     const payload = await requestJson<SessionStatusResponse>("/session");
     renderSession(payload.session);
   } catch (error) {
-    renderError(error instanceof Error ? error.message : "Companion unavailable");
+    sessionSummaryLabel.textContent = "Hosted microphone capture is ready. Legacy companion state is unavailable.";
+    sessionJsonOutput.textContent = "Hosted path does not depend on the legacy companion.";
+    console.warn(error);
   }
 }
 
@@ -947,7 +1849,10 @@ async function refreshRuntimeConfig() {
     const payload = await requestJson<RuntimeConfigResponse>("/config");
     renderRuntimeConfig(payload.config);
   } catch (error) {
-    renderError(error instanceof Error ? error.message : "Unable to load runtime config");
+    selectedRuntimeDisplay.textContent = selectedRuntimeId;
+    runtimeOptionsDisplay.textContent = "Hosted capture is ready.";
+    defaultLanguageDisplay.textContent = DEFAULT_LANGUAGE.toUpperCase();
+    console.warn(error);
   }
 }
 
@@ -956,7 +1861,9 @@ async function refreshMeetingHelper() {
     const payload = await requestJson<MeetingHelperResponse>("/meeting-helper");
     renderMeetingHelper(payload.meetingHelper);
   } catch (error) {
-    renderError(error instanceof Error ? error.message : "Unable to load meeting helper");
+    meetingStatusLabel.textContent = "Hosted capture available.";
+    meetingFallbackStatusLabel.textContent = "Legacy companion unavailable.";
+    console.warn(error);
   }
 }
 
@@ -965,7 +1872,8 @@ async function refreshExperimentalGoogleMeet() {
     const payload = await requestJson<ExperimentalGoogleMeetResponse>("/experimental/google-meet");
     renderExperimentalGoogleMeet(payload.experimentalGoogleMeet);
   } catch (error) {
-    experimentalGoogleMeetErrorLabel.textContent = error instanceof Error ? error.message : "Unable to load experimental Google Meet state";
+    experimentalGoogleMeetErrorLabel.textContent = "Legacy companion unavailable; hosted capture remains available.";
+    console.warn(error);
   }
 }
 
@@ -999,6 +1907,11 @@ async function saveExperimentalGoogleMeetSelection(enabled = experimentalGoogleM
 }
 
 async function refreshTranscript() {
+  if (hostedCaptureActive && hostedSession) {
+    await refreshHostedAudioChunks(hostedSession.id);
+    return;
+  }
+
   try {
     const payload = await requestJson<TranscriptResponse>(`/transcript?sinceSegmentCount=${transcriptSegments.length}`);
     if (payload.transcript.revision !== transcriptRevision) {
@@ -1020,11 +1933,18 @@ async function refreshTranscript() {
       }
     }
   } catch (error) {
-    renderError(error instanceof Error ? error.message : "Unable to load transcript stream");
+    transcriptStatus.textContent = "Hosted audio capture ready.";
+    transcriptListEl.innerHTML = '<li class="transcript-empty">Hosted audio capture is active or ready.</li>';
+    console.warn(error);
   }
 }
 
 async function refreshLiveNotes() {
+  if (hostedCaptureActive) {
+    notesStatus.textContent = "Hosted audio capture active. Notes will return after transcription.";
+    return;
+  }
+
   try {
     const payload = await requestJson<LiveNotesResponse>("/notes");
     if (payload.notes.revision !== notesRevision) {
@@ -1042,11 +1962,18 @@ async function refreshLiveNotes() {
       notesStatus.textContent = `Polling live notes... revision ${notesRevision}`;
     }
   } catch (error) {
-    renderError(error instanceof Error ? error.message : "Unable to load live notes");
+    notesStatus.textContent = "Hosted audio capture ready.";
+    notesListEl.innerHTML = '<li class="transcript-empty">Notes will appear after transcription in the next series.</li>';
+    console.warn(error);
   }
 }
 
 async function refreshSummary() {
+  if (hostedCaptureActive) {
+    renderSummaryState("Waiting for transcription and summarization.", null);
+    return;
+  }
+
   try {
     const payload = await requestJson<SummaryResponse>("/summary");
     if (payload.summary.isReady && payload.summary.summary) {
@@ -1061,11 +1988,18 @@ async function refreshSummary() {
     currentSummary = null;
     renderSummaryState("Waiting for session to complete", null);
   } catch (error) {
-    renderError(error instanceof Error ? error.message : "Unable to load summary");
+    summaryStatus.textContent = "Hosted audio capture ready.";
+    summaryOverview.textContent = "Waiting for transcription and summarization.";
+    summaryPoints.innerHTML = "<li>Transcript generation is next.</li>";
+    console.warn(error);
   }
 }
 
 async function refreshArchive() {
+  if (hostedCaptureActive) {
+    return;
+  }
+
   try {
     const payload = await requestJson<SessionArchiveListResponse>("/sessions");
     archivedSessions = [...payload.sessions];
@@ -1080,7 +2014,10 @@ async function refreshArchive() {
       await refreshArchiveSelection(selectedArchiveSessionId);
     }
   } catch (error) {
-    renderError(error instanceof Error ? error.message : "Unable to load session archive");
+    historyCount.textContent = "0";
+    historyStatus.textContent = "None selected";
+    historyDetailEl.innerHTML = "<p>Hosted archive will use the new cloud-backed path in a later series.</p>";
+    console.warn(error);
   }
 }
 
@@ -1134,52 +2071,35 @@ function startNotesPolling() {
 sessionForm.addEventListener("submit", async (event) => {
   event.preventDefault();
 
-  const payload: StartSessionRequest = {
-    sourceType: selectedMode,
-    runtimeId: selectedRuntimeId as StartSessionRequest["runtimeId"],
-    language: defaultLanguage,
-    saveTranscript: saveTranscriptEl.checked,
-    saveSummary: saveSummaryEl.checked,
-    meetingSurface: selectedMode === "meeting-helper" ? selectedMeetingSurface : undefined
-  };
-
   try {
-    const response = await requestJson<SessionStartResponse>("/session/start", {
-      method: "POST",
-      body: JSON.stringify(payload)
-    });
-    renderSession(response.session);
-    transcriptRevision = 0;
-    transcriptSegments = [];
-    notesRevision = 0;
-    currentSummary = null;
-    transcriptChunkCount.textContent = "0";
-    transcriptRevisionDisplay.textContent = "0";
-    transcriptUpdated.textContent = "Never";
-    transcriptListEl.innerHTML = "";
-    notesCount.textContent = "0";
-    notesRevisionDisplay.textContent = "0";
-    notesUpdated.textContent = "Never";
-    notesListEl.innerHTML = "";
-    renderNotesState("Simulated live notes (waiting for chunks)", {
-      sessionId: null,
-      revision: 0,
-      updatedAt: null,
-      noteCount: 0,
-      isSimulated: true,
-      isActive: false,
-      notes: []
-    });
-    renderSummaryState("Waiting for session to complete", null);
-    renderTranscriptState("Simulated streaming transcript (waiting for chunks)", transcriptSegments);
-    void refreshMeetingHelper();
-    void refreshExperimentalGoogleMeet();
-    startTranscriptPolling();
-    startNotesPolling();
-    void refreshTranscript();
-    void refreshLiveNotes();
-    void refreshSummary();
-    void refreshArchive();
+    if (selectedMode === "speakerphone") {
+      if (!supportsHostedMicrophoneCapture()) {
+        setMicStatus("MediaRecorder microphone capture is not supported in this browser.");
+        renderError("This browser does not support hosted microphone capture.");
+        return;
+      }
+
+      stopBrowserSpeechRecognition();
+      transcriptRevision = 0;
+      transcriptSegments = [];
+      notesRevision = 0;
+      currentSummary = null;
+      transcriptChunkCount.textContent = "0";
+      transcriptRevisionDisplay.textContent = "0";
+      transcriptUpdated.textContent = "Never";
+      transcriptListEl.innerHTML = "";
+      notesCount.textContent = "0";
+      notesRevisionDisplay.textContent = "0";
+      notesUpdated.textContent = "Never";
+      notesListEl.innerHTML = "";
+      stopTranscriptPolling();
+      stopNotesPolling();
+      await startHostedMicrophoneCapture();
+      setMicStatus("Hosted microphone capture is live. Whisper transcription begins in Series 4.");
+    } else {
+      renderError("Series 3 only supports hosted browser microphone capture. System audio and meeting capture are deferred to later series.");
+      return;
+    }
   } catch (error) {
     renderError(error instanceof Error ? error.message : "Unable to start session");
   }
@@ -1196,20 +2116,35 @@ stopButton.addEventListener("click", async () => {
   };
 
   try {
-    const response = await requestJson<SessionStopResponse>("/session/stop", {
-      method: "POST",
-      body: JSON.stringify(payload)
-    });
-    renderSession(response.session);
-    selectedArchiveSessionId = response.session.id;
-    stopTranscriptPolling();
-    stopNotesPolling();
-    void refreshMeetingHelper();
-    void refreshExperimentalGoogleMeet();
-    void refreshTranscript();
-    void refreshLiveNotes();
-    void refreshSummary();
-    void refreshArchive();
+    const isHostedSpeakerphoneSession = Boolean(hostedSession && currentSession.id === hostedSession.id);
+
+    if (isHostedSpeakerphoneSession) {
+      await stopHostedMicrophoneCapture();
+      renderHostedCaptureCompletionPlaceholders();
+      selectedArchiveSessionId = null;
+      stopTranscriptPolling();
+      stopNotesPolling();
+      stopBrowserSpeechRecognition();
+      setMicStatus("Hosted microphone capture stopped. Whisper transcription begins in Series 4.");
+    } else {
+      await flushBrowserSpeechRecognition();
+      const response = await requestJson<SessionStopResponse>("/session/stop", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      renderSession(response.session);
+      selectedArchiveSessionId = response.session.id;
+      stopTranscriptPolling();
+      stopNotesPolling();
+      stopBrowserSpeechRecognition();
+      void refreshMeetingHelper();
+      void refreshExperimentalGoogleMeet();
+      void refreshTranscript();
+      void refreshLiveNotes();
+      void refreshSummary();
+      void refreshArchive();
+      setMicStatus("Microphone transcription stopped.");
+    }
   } catch (error) {
     renderError(error instanceof Error ? error.message : "Unable to stop session");
   }
@@ -1218,6 +2153,11 @@ stopButton.addEventListener("click", async () => {
 captureModeInput.addEventListener("change", () => {
   selectedMode = captureModeInput.value as CaptureMode;
   selectedModeDisplay.textContent = selectedMode;
+  if (selectedMode !== "speakerphone") {
+    setMicStatus("Only speakerphone mode is active on the hosted path in Series 3.");
+  } else if (!currentSession) {
+    setMicStatus("Waiting to start");
+  }
 });
 
 runtimeSelectEl.addEventListener("change", () => {
@@ -1272,13 +2212,4 @@ startButton.disabled = false;
 runtimeSelectEl.disabled = true;
 saveRuntimeEl.disabled = true;
 syncElapsedTime(null);
-void refreshRuntimeConfig();
-void refreshMeetingHelper();
-void refreshExperimentalGoogleMeet();
-void refreshSession();
-void refreshTranscript();
-void refreshLiveNotes();
-void refreshSummary();
-void refreshArchive();
-startTranscriptPolling();
-startNotesPolling();
+resetHostedAudioUi();

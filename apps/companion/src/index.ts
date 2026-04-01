@@ -29,6 +29,9 @@ import type {
   SessionStopResponse,
   TranscriptPipelineState,
   TranscriptResponse,
+  TranscriptIngestRequest,
+  TranscriptIngestResponse,
+  TranscriptIngestSegment,
   TranscriptSegment,
   SummaryResponse,
   StartSessionRequest,
@@ -162,6 +165,26 @@ const liveNoteTemplates = [
   "Live note: future work can add richer meeting support."
 ];
 
+function normalizeTranscriptText(text: string) {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function shortenTranscriptText(text: string, maxLength = 120) {
+  const normalized = normalizeTranscriptText(text);
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function estimateSegmentDurationMs(text: string) {
+  const wordCount = normalizeTranscriptText(text)
+    .split(/\s+/)
+    .filter(Boolean).length;
+  return Math.max(1200, Math.min(6000, wordCount * 350));
+}
+
 function loadSessionArchive(): SessionArchiveEntry[] {
   try {
     if (!fs.existsSync(archivePath)) {
@@ -241,31 +264,50 @@ function createTranscriptSegment(index: number, sessionId: string): TranscriptSe
 }
 
 function createLiveNote(segment: TranscriptSegment, index: number): LiveNote {
-  const template = liveNoteTemplates[index % liveNoteTemplates.length];
+  const template = liveNotesState.isSimulated
+    ? liveNoteTemplates[index % liveNoteTemplates.length]
+    : "Live note";
+  const noteText = liveNotesState.isSimulated
+    ? `${template} Source chunk: ${segment.text}`
+    : `${template}: ${shortenTranscriptText(segment.text)}`;
   return {
     id: `note-${segment.sessionId}-${index + 1}`,
     sessionId: segment.sessionId,
-    text: `${template} Source chunk: ${segment.text}`,
+    text: noteText,
     createdAt: new Date().toISOString(),
     derivedFromSegmentIds: [segment.id]
   };
 }
 
 function buildFinalSummary(session: SessionRecord, segments: readonly TranscriptSegment[], notes: readonly LiveNote[]): FinalSummary {
+  const normalizedSegments = segments.map((segment) => normalizeTranscriptText(segment.text)).filter(Boolean);
   const keyPoints = notes.length > 0
     ? notes.slice(0, 4).map((note) => note.text.replace(/^Live note:\s*/i, ""))
-    : segments.slice(0, 3).map((segment) => segment.text);
+    : normalizedSegments.slice(0, 4).map((segment) => shortenTranscriptText(segment, 140));
+  const overview =
+    session.sourceType === "speakerphone" && normalizedSegments.length > 0
+      ? `Captured ${segments.length} spoken segment${segments.length === 1 ? "" : "s"} from the speakerphone session. ${normalizedSegments.slice(0, 2).join(" ")}`
+      : `Simulated summary for a ${session.sourceType} session with ${segments.length} transcript chunks and ${notes.length} live notes.`;
 
   return {
     sessionId: session.id,
-    overview: `Simulated summary for a ${session.sourceType} session with ${segments.length} transcript chunks and ${notes.length} live notes.`,
+    overview,
     keyPoints,
-    followUps: [
-      "Review the simulated summary structure against real transcript output.",
-      "Replace the simulated note and summary generators with model-backed logic."
-    ],
+    followUps:
+      session.sourceType === "speakerphone"
+        ? [
+            "Review the captured transcript against the original conversation.",
+            "Replace the heuristic summary with a stronger local model when ready."
+          ]
+        : [
+            "Review the simulated summary structure against real transcript output.",
+            "Replace the simulated note and summary generators with model-backed logic."
+          ],
     generatedAt: new Date().toISOString(),
-    modelInfo: `simulated-summary-${session.runtimeId}`
+    modelInfo:
+      session.sourceType === "speakerphone"
+        ? "browser-speech-recognition+extractive-summary"
+        : `simulated-summary-${session.runtimeId}`
   };
 }
 
@@ -403,7 +445,7 @@ function startLiveNotesPipeline(session: SessionRecord) {
     revision: 1,
     updatedAt: new Date(session.startedAt).toISOString(),
     noteCount: 0,
-    isSimulated: true,
+    isSimulated: session.sourceType !== "speakerphone",
     isActive: true,
     notes: []
   };
@@ -459,10 +501,14 @@ function startTranscriptPipeline(session: SessionRecord) {
     startedAt,
     lastSegmentAt: startedAt,
     segmentCount: 0,
-    isSimulated: true,
+    isSimulated: session.sourceType !== "speakerphone",
     isActive: true,
     segments: []
   };
+
+  if (session.sourceType === "speakerphone") {
+    return;
+  }
 
   let nextSegmentIndex = 0;
   transcriptTimer = setInterval(() => {
@@ -491,6 +537,83 @@ function startTranscriptPipeline(session: SessionRecord) {
     };
     appendLiveNote(segment);
   }, 2500);
+}
+
+function isValidTranscriptIngestRequest(body: Partial<TranscriptIngestRequest>): body is TranscriptIngestRequest {
+  return (
+    typeof body.sessionId === "string" &&
+    Array.isArray(body.segments) &&
+    body.segments.length > 0 &&
+    body.segments.every((segment) => typeof segment?.text === "string")
+  );
+}
+
+function appendTranscriptSegments(session: SessionRecord, segments: readonly TranscriptIngestSegment[]) {
+  const startedAtMs = new Date(session.startedAt).getTime();
+  let lastEndMs = transcriptState.lastSegmentAt ? Math.max(0, new Date(transcriptState.lastSegmentAt).getTime() - startedAtMs) : transcriptState.segmentCount * 500;
+  const appendedSegments: TranscriptSegment[] = [];
+
+  for (const segmentInput of segments) {
+    const text = normalizeTranscriptText(segmentInput.text);
+    if (!text) {
+      continue;
+    }
+
+    const estimatedDurationMs = Math.max(
+      900,
+      Math.min(
+        6000,
+        typeof segmentInput.endMs === "number" && typeof segmentInput.startMs === "number"
+          ? Math.max(250, segmentInput.endMs - segmentInput.startMs)
+          : estimateSegmentDurationMs(text)
+      )
+    );
+    const fallbackEndMs = lastEndMs + estimatedDurationMs;
+    const providedStartMs = typeof segmentInput.startMs === "number" ? Math.max(0, segmentInput.startMs) : Math.max(0, fallbackEndMs - estimatedDurationMs);
+    const providedEndMs = typeof segmentInput.endMs === "number" ? Math.max(providedStartMs + 250, segmentInput.endMs) : fallbackEndMs;
+    const startMs = Math.max(lastEndMs + 150, providedStartMs);
+    const endMs = Math.max(startMs + 250, providedEndMs);
+    const transcriptSegment: TranscriptSegment = {
+      id: `segment-${session.id}-${transcriptState.segmentCount + appendedSegments.length + 1}`,
+      sessionId: session.id,
+      text,
+      startMs,
+      endMs,
+      speakerLabel: segmentInput.speakerLabel ?? "Speaker 1",
+      confidence: segmentInput.confidence
+    };
+
+    appendedSegments.push(transcriptSegment);
+    lastEndMs = endMs;
+  }
+
+  if (appendedSegments.length === 0) {
+    return;
+  }
+
+  const updatedAt = new Date().toISOString();
+  transcriptState = {
+    ...transcriptState,
+    revision: transcriptState.revision + 1,
+    updatedAt,
+    lastSegmentAt: updatedAt,
+    segmentCount: transcriptState.segmentCount + appendedSegments.length,
+    isSimulated: false,
+    isActive: true,
+    segments: [...transcriptState.segments, ...appendedSegments]
+  };
+
+  for (const segment of appendedSegments) {
+    appendLiveNote(segment);
+  }
+
+  liveNotesState = {
+    ...liveNotesState,
+    isSimulated: false,
+    isActive: true,
+    sessionId: session.id,
+    updatedAt
+  };
 }
 
 function getTranscriptPayload(sinceSegmentCount?: number): TranscriptResponse {
@@ -636,6 +759,48 @@ const server = createServer((req, res) => {
     const sinceSegmentCountParam = url.searchParams.get("sinceSegmentCount");
     const sinceSegmentCount = sinceSegmentCountParam ? Number(sinceSegmentCountParam) : undefined;
     writeJson(res, 200, getTranscriptPayload(Number.isFinite(sinceSegmentCount) ? sinceSegmentCount : undefined));
+    return;
+  }
+
+  if (url.pathname === "/transcript/append" && req.method === "POST") {
+    void readJsonBody<TranscriptIngestRequest>(req)
+      .then((body) => {
+        if (!activeSession || activeSession.status !== "recording") {
+          const payload: SessionError = { message: "No active session to append transcript to." };
+          writeJson(res, 409, payload);
+          return;
+        }
+
+        if (activeSession.id !== body.sessionId) {
+          const payload: SessionError = { message: "Session ID does not match the active session." };
+          writeJson(res, 400, payload);
+          return;
+        }
+
+        if (activeSession.sourceType !== "speakerphone") {
+          const payload: SessionError = { message: "Transcript append is only supported for speakerphone sessions." };
+          writeJson(res, 409, payload);
+          return;
+        }
+
+        if (!isValidTranscriptIngestRequest(body)) {
+          const payload: SessionError = { message: "Transcript ingest payload is missing required fields." };
+          writeJson(res, 400, payload);
+          return;
+        }
+
+        appendTranscriptSegments(activeSession, body.segments);
+        const payload: TranscriptIngestResponse = {
+          transcript: transcriptState,
+          notes: liveNotesState,
+          summary: summaryState
+        };
+        writeJson(res, 200, payload);
+      })
+      .catch(() => {
+        const payload: SessionError = { message: "Invalid transcript ingest payload." };
+        writeJson(res, 400, payload);
+      });
     return;
   }
 
@@ -823,7 +988,7 @@ const server = createServer((req, res) => {
           sessionId: activeSession.id,
           revision: summaryState.revision + 1,
           generatedAt: endedAt,
-          isSimulated: true,
+          isSimulated: activeSession.sourceType !== "speakerphone",
           isReady: true,
           summary: buildFinalSummary(activeSession, transcriptState.segments, liveNotesState.notes)
         };
@@ -842,11 +1007,11 @@ const server = createServer((req, res) => {
     writeJson(res, 200, {
       service: "voice-to-text-summarizer-companion",
       message: "Companion shell is running.",
-      routes: ["/health", "/bridge-contract", "/config", "/experimental/google-meet", "/meeting-helper", "/session", "/session/start", "/session/stop", "/transcript", "/notes", "/summary", "/sessions"]
+      routes: ["/health", "/bridge-contract", "/config", "/experimental/google-meet", "/meeting-helper", "/session", "/session/start", "/session/stop", "/transcript", "/transcript/append", "/notes", "/summary", "/sessions"]
     });
 });
 
 server.listen(port, () => {
   console.log(`Companion server ready at http://localhost:${port}`);
-  console.log("Bridge contract endpoints: /health, /bridge-contract, /config, /experimental/google-meet, /meeting-helper, /session, /transcript, /notes, /summary, /sessions");
+  console.log("Bridge contract endpoints: /health, /bridge-contract, /config, /experimental/google-meet, /meeting-helper, /session, /transcript, /transcript/append, /notes, /summary, /sessions");
 });

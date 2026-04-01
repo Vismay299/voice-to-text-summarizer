@@ -144,6 +144,10 @@ code {
   grid-column: 1 / -1;
 }
 
+.hosted-audio-card {
+  grid-column: 1 / -1;
+}
+
 .notes-card,
 .summary-card {
   grid-column: span 1;
@@ -163,7 +167,7 @@ code {
 
 .transcript-metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 12px;
   margin: 16px 0 18px;
 }
@@ -182,12 +186,16 @@ code {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--accent);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
 }
 
 .metric span {
   color: var(--text);
   font-weight: 700;
   line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .transcript-list {

@@ -8,6 +8,7 @@ export const BRIDGE_COMMANDS = [
   "startSession",
   "stopSession",
   "getTranscript",
+  "appendTranscriptSegments",
   "getLiveNotes",
   "getMeetingHelper",
   "setMeetingHelper",
@@ -79,6 +80,25 @@ export interface TranscriptSegment {
   endMs: number;
   speakerLabel?: string;
   confidence?: number;
+}
+
+export interface TranscriptIngestSegment {
+  text: string;
+  startMs?: number;
+  endMs?: number;
+  speakerLabel?: string;
+  confidence?: number;
+}
+
+export interface TranscriptIngestRequest {
+  sessionId: string;
+  segments: readonly TranscriptIngestSegment[];
+}
+
+export interface TranscriptIngestResponse {
+  transcript: TranscriptPipelineState;
+  notes: LiveNotesPipelineState;
+  summary: FinalSummaryState;
 }
 
 export interface LiveNote {
