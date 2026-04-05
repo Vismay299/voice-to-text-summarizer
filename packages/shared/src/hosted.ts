@@ -490,6 +490,7 @@ export interface HostedPersistenceRepository {
   listAudioChunks(sessionId: string): Promise<readonly HostedAudioChunkRecord[]>;
   listModelRuns(sessionId: string): Promise<readonly HostedModelRunRecord[]>;
   stopSession(sessionId: string, request?: HostedSessionStopRequest): Promise<HostedSessionRecord>;
+  reprocessFinalAsrSession(sessionId: string): Promise<HostedSessionRecord>;
   recordModelRun(sessionId: string, request: HostedModelRunCreateRequest): Promise<HostedModelRunRecord>;
   appendSessionEvent(sessionId: string, request: HostedSessionEventCreateRequest): Promise<HostedSessionEventRecord>;
   snapshot(): Promise<HostedPersistenceSnapshot>;

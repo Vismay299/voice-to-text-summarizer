@@ -344,6 +344,48 @@ export class InMemoryHostedRepository implements HostedPersistenceRepository {
     return cloneSession(updated);
   }
 
+  async reprocessFinalAsrSession(sessionId: string): Promise<HostedSessionRecord> {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Session ${sessionId} does not exist.`);
+    }
+    if (!session.endedAt) {
+      throw new Error(`Session ${sessionId} has not finished recording yet.`);
+    }
+
+    const audioChunks = this.audioChunksBySession.get(sessionId) ?? [];
+    if (audioChunks.length === 0) {
+      throw new Error(`Session ${sessionId} has no uploaded audio chunks to reprocess.`);
+    }
+
+    const transcriptSegmentCount = this.transcriptSegments.filter((segment) => segment.sessionId === sessionId).length;
+    if (transcriptSegmentCount > 0) {
+      throw new Error(`Session ${sessionId} already has transcript segments and is not eligible for empty-session reprocessing.`);
+    }
+
+    const reprocessRequestedAt = now();
+    const updated: HostedSessionRecord = {
+      ...updateSessionStatus(session, "processing"),
+      metadata: {
+        ...session.metadata,
+        awaitingFinalTranscript: true,
+        forceRetranscribe: true,
+        reprocessRequestedAt
+      }
+    };
+    delete updated.metadata.errorMessage;
+    this.sessions.set(sessionId, updated);
+    await this.appendSessionEvent(sessionId, {
+      type: "session.updated",
+      payload: {
+        status: "processing",
+        reprocessRequestedAt,
+        reason: "empty-transcript-retry"
+      }
+    });
+    return cloneSession(updated);
+  }
+
   async recordModelRun(sessionId: string, request: HostedModelRunCreateRequest): Promise<HostedModelRunRecord> {
     const session = this.sessions.get(sessionId);
     if (!session) {
@@ -843,6 +885,93 @@ export class PostgresHostedRepository implements HostedPersistenceRepository {
 
       await client.query("COMMIT");
       return mapSessionRow(stoppedResult.rows[0] as Record<string, unknown>);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async reprocessFinalAsrSession(sessionId: string): Promise<HostedSessionRecord> {
+    const client = await this.pool.connect();
+
+    try {
+      await client.query("BEGIN");
+      const sessionResult = await client.query("SELECT * FROM sessions WHERE id = $1 FOR UPDATE", [sessionId]);
+      const session = sessionResult.rows[0];
+      if (!session) {
+        throw new Error(`Session ${sessionId} does not exist.`);
+      }
+      if (!session.ended_at) {
+        throw new Error(`Session ${sessionId} has not finished recording yet.`);
+      }
+
+      const audioChunkResult = await client.query(
+        `
+          SELECT COUNT(*)::int AS audio_chunk_count
+          FROM audio_chunks
+          WHERE session_id = $1
+        `,
+        [sessionId]
+      );
+      const audioChunkCount = Number(audioChunkResult.rows[0]?.audio_chunk_count ?? 0);
+      if (audioChunkCount === 0) {
+        throw new Error(`Session ${sessionId} has no uploaded audio chunks to reprocess.`);
+      }
+
+      const transcriptResult = await client.query(
+        `
+          SELECT COUNT(*)::int AS transcript_segment_count
+          FROM transcript_segments
+          WHERE session_id = $1
+        `,
+        [sessionId]
+      );
+      const transcriptSegmentCount = Number(transcriptResult.rows[0]?.transcript_segment_count ?? 0);
+      if (transcriptSegmentCount > 0) {
+        throw new Error(`Session ${sessionId} already has transcript segments and is not eligible for empty-session reprocessing.`);
+      }
+
+      const reprocessRequestedAt = now();
+      const metadata: Record<string, string | number | boolean | null> = {
+        ...(((session.metadata ?? {}) as Record<string, string | number | boolean | null>) ?? {}),
+        awaitingFinalTranscript: true,
+        forceRetranscribe: true,
+        reprocessRequestedAt
+      };
+      delete metadata.errorMessage;
+
+      const updatedResult = await client.query(
+        `
+          UPDATE sessions
+          SET status = 'processing',
+              metadata = $2::jsonb,
+              updated_at = NOW()
+          WHERE id = $1
+          RETURNING *
+        `,
+        [sessionId, JSON.stringify(metadata)]
+      );
+
+      await client.query(
+        `
+          INSERT INTO session_events (id, session_id, type, payload)
+          VALUES ($1, $2, 'session.updated', $3::jsonb)
+        `,
+        [
+          createId("event"),
+          sessionId,
+          JSON.stringify({
+            status: "processing",
+            reprocessRequestedAt,
+            reason: "empty-transcript-retry"
+          })
+        ]
+      );
+
+      await client.query("COMMIT");
+      return mapSessionRow(updatedResult.rows[0] as Record<string, unknown>);
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;

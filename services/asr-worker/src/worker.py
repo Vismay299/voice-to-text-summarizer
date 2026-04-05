@@ -83,6 +83,9 @@ class WorkerConfig:
     compute_type: str
     beam_size: int
     vad_filter: bool
+    retry_without_vad_on_empty: bool
+    normalize_audio: bool
+    normalization_filter: str | None
     cpu_threads: int
     num_workers: int
     model_cache_dir: str | None
@@ -128,7 +131,13 @@ def build_config() -> WorkerConfig:
         device=env("ASR_DEVICE", "cpu") or "cpu",
         compute_type=env("ASR_COMPUTE_TYPE", "int8") or "int8",
         beam_size=parse_int("ASR_BEAM_SIZE", 5),
-        vad_filter=parse_bool("ASR_VAD_FILTER", True),
+        vad_filter=parse_bool("ASR_VAD_FILTER", False),
+        retry_without_vad_on_empty=parse_bool("ASR_RETRY_WITHOUT_VAD_ON_EMPTY", True),
+        normalize_audio=parse_bool("ASR_NORMALIZE_AUDIO", True),
+        normalization_filter=env(
+            "ASR_NORMALIZATION_FILTER",
+            "highpass=f=60,lowpass=f=7600,loudnorm=I=-16:TP=-1.5:LRA=11",
+        ),
         cpu_threads=parse_int("ASR_CPU_THREADS", max(1, os.cpu_count() or 1)),
         num_workers=parse_int("ASR_NUM_WORKERS", 1),
         model_cache_dir=env("ASR_MODEL_CACHE_DIR"),
@@ -202,11 +211,11 @@ class AsrWorker:
         destination.parent.mkdir(parents=True, exist_ok=True)
         return destination
 
-    def transcribe(self, audio_path: Path) -> list[dict[str, Any]]:
+    def transcribe_once(self, audio_path: Path, vad_filter: bool) -> list[dict[str, Any]]:
         segments_iter, info = self.model.transcribe(
             str(audio_path),
             language=self.config.language,
-            vad_filter=self.config.vad_filter,
+            vad_filter=vad_filter,
             beam_size=self.config.beam_size,
             temperature=0.0,
             condition_on_previous_text=False,
@@ -216,7 +225,7 @@ class AsrWorker:
         print(
             "[asr-worker] transcription info "
             f"language={info.language} probability={info.language_probability:.4f} "
-            f"duration={info.duration:.2f}s"
+            f"duration={info.duration:.2f}s vadFilter={vad_filter}"
         )
         return [
             {
@@ -230,6 +239,15 @@ class AsrWorker:
             for segment in segments_iter
             if str(segment.text).strip()
         ]
+
+    def transcribe(self, audio_path: Path) -> tuple[list[dict[str, Any]], bool, bool]:
+        segments = self.transcribe_once(audio_path, self.config.vad_filter)
+        if segments or not self.config.vad_filter or not self.config.retry_without_vad_on_empty:
+            return segments, self.config.vad_filter, False
+
+        print("[asr-worker] no transcript segments with VAD enabled; retrying authoritative pass without VAD")
+        retry_segments = self.transcribe_once(audio_path, False)
+        return retry_segments, False, True
 
     def requeue_stale_sessions(self, cur: psycopg.Cursor[Any]) -> int:
         stale_at = now_iso()
@@ -275,9 +293,14 @@ class AsrWorker:
                     """
                     SELECT s.id, s.started_at, s.ended_at, s.created_at, s.metadata
                     FROM sessions s
-                    WHERE s.status = 'processing'
-                      AND s.ended_at IS NOT NULL
-                      AND COALESCE(NULLIF(s.metadata->>'awaitingFinalTranscript', '')::boolean, false)
+                    WHERE s.ended_at IS NOT NULL
+                      AND (
+                        (
+                          s.status = 'processing'
+                          AND COALESCE(NULLIF(s.metadata->>'awaitingFinalTranscript', '')::boolean, false)
+                        )
+                        OR COALESCE(NULLIF(s.metadata->>'forceRetranscribe', '')::boolean, false)
+                      )
                       AND NOT EXISTS (
                         SELECT 1
                         FROM model_runs mr
@@ -286,13 +309,16 @@ class AsrWorker:
                           AND mr.status = 'running'
                           AND COALESCE(mr.metadata->>'pass', '') = 'authoritative-final'
                       )
-                      AND NOT EXISTS (
-                        SELECT 1
-                        FROM model_runs mr
-                        WHERE mr.session_id = s.id
-                          AND mr.kind = 'asr'
-                          AND mr.status = 'complete'
-                          AND COALESCE(mr.metadata->>'pass', '') = 'authoritative-final'
+                      AND (
+                        COALESCE(NULLIF(s.metadata->>'forceRetranscribe', '')::boolean, false)
+                        OR NOT EXISTS (
+                          SELECT 1
+                          FROM model_runs mr
+                          WHERE mr.session_id = s.id
+                            AND mr.kind = 'asr'
+                            AND mr.status = 'complete'
+                            AND COALESCE(mr.metadata->>'pass', '') = 'authoritative-final'
+                        )
                       )
                     ORDER BY s.updated_at ASC, s.created_at ASC
                     FOR UPDATE OF s SKIP LOCKED
@@ -369,6 +395,9 @@ class AsrWorker:
                     "device": self.config.device,
                     "computeType": self.config.compute_type,
                     "workerId": self.config.worker_id,
+                    "vadFilter": self.config.vad_filter,
+                    "normalizedAudio": self.config.normalize_audio,
+                    "normalizationFilter": self.config.normalization_filter,
                 }
 
                 cur.execute(
@@ -454,36 +483,88 @@ class AsrWorker:
             resolved_paths.append(resolved_path)
             storage_modes.append(storage_mode)
 
-        concat_manifest = temp_dir / "concat.txt"
-        concat_manifest.write_text(
-            "\n".join(f"file {shlex.quote(str(path))}" for path in resolved_paths),
-            encoding="utf-8",
+        merged_audio_path = self.resolve_output_path(job.merged_audio_object_path)
+        use_binary_webm_assembly = all(
+            chunk.mime_type.startswith("audio/webm") or chunk.object_path.endswith(".webm") for chunk in job.chunks
         )
 
-        merged_audio_path = self.resolve_output_path(job.merged_audio_object_path)
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-v",
-                "error",
-                "-f",
-                "concat",
-                "-safe",
-                "0",
-                "-i",
-                str(concat_manifest),
-                "-vn",
-                "-ac",
-                "1",
-                "-ar",
-                "16000",
-                "-c:a",
-                "pcm_s16le",
-                str(merged_audio_path),
-            ],
-            check=True,
-        )
+        ffmpeg_command = ["ffmpeg", "-y", "-v", "error"]
+        if use_binary_webm_assembly:
+            assembled_media_path = temp_dir / "assembled.webm"
+            with assembled_media_path.open("wb") as destination:
+                for resolved_path in resolved_paths:
+                    with resolved_path.open("rb") as source:
+                        shutil.copyfileobj(source, destination)
+            ffmpeg_command.extend(["-i", str(assembled_media_path)])
+            concat_manifest = None
+        else:
+            transcoded_paths: list[Path] = []
+            for index, resolved_path in enumerate(resolved_paths):
+                transcoded_path = temp_dir / f"chunk-{index:06d}.wav"
+                subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-y",
+                        "-v",
+                        "error",
+                        "-i",
+                        str(resolved_path),
+                        "-vn",
+                        "-ac",
+                        "1",
+                        "-ar",
+                        "16000",
+                        "-c:a",
+                        "pcm_s16le",
+                        str(transcoded_path),
+                    ],
+                    check=True,
+                )
+                transcoded_paths.append(transcoded_path)
+
+            concat_manifest = temp_dir / "concat.txt"
+            concat_manifest.write_text(
+                "\n".join(f"file {shlex.quote(str(path))}" for path in transcoded_paths),
+                encoding="utf-8",
+            )
+            ffmpeg_command.extend(["-f", "concat", "-safe", "0", "-i", str(concat_manifest)])
+
+        ffmpeg_command.extend(["-vn", "-ac", "1", "-ar", "16000"])
+        if self.config.normalize_audio and self.config.normalization_filter:
+            ffmpeg_command.extend(["-af", self.config.normalization_filter])
+        ffmpeg_command.extend(["-c:a", "pcm_s16le", str(merged_audio_path)])
+        try:
+            subprocess.run(ffmpeg_command, check=True)
+        except subprocess.CalledProcessError:
+            if not (self.config.normalize_audio and self.config.normalization_filter):
+                raise
+
+            print(
+                "[asr-worker] audio normalization failed, retrying merge without filter "
+                f"filter={self.config.normalization_filter!r}"
+            )
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-v",
+                    "error",
+                    *(
+                        ["-i", str(temp_dir / "assembled.webm")]
+                        if use_binary_webm_assembly
+                        else ["-f", "concat", "-safe", "0", "-i", str(concat_manifest)]
+                    ),
+                    "-vn",
+                    "-ac",
+                    "1",
+                    "-ar",
+                    "16000",
+                    "-c:a",
+                    "pcm_s16le",
+                    str(merged_audio_path),
+                ],
+                check=True,
+            )
 
         source_storage_mode = storage_modes[0] if storage_modes else "filesystem"
         if any(mode != source_storage_mode for mode in storage_modes):
@@ -496,6 +577,8 @@ class AsrWorker:
         job: ClaimedFinalSession,
         merged_audio_path: Path,
         segments: list[dict[str, Any]],
+        effective_vad_filter: bool,
+        retried_without_vad: bool,
         latency_ms: int,
         source_storage_mode: str,
     ) -> None:
@@ -592,7 +675,11 @@ class AsrWorker:
                                'chunkCount', %s::int,
                                'mergedAudioPath', %s::text,
                                'sourceStorageMode', %s::text,
-                               'resolvedPath', %s::text
+                               'resolvedPath', %s::text,
+                               'vadFilter', %s::boolean,
+                               'retriedWithoutVad', %s::boolean,
+                               'normalizedAudio', %s::boolean,
+                               'normalizationFilter', %s::text
                              )
                     WHERE id = %s
                     """,
@@ -604,6 +691,10 @@ class AsrWorker:
                         job.merged_audio_object_path,
                         source_storage_mode,
                         str(merged_audio_path),
+                        effective_vad_filter,
+                        retried_without_vad,
+                        self.config.normalize_audio,
+                        self.config.normalization_filter,
                         job.model_run_id,
                     ],
                 )
@@ -617,6 +708,11 @@ class AsrWorker:
                 metadata["sourceStorageMode"] = source_storage_mode
                 metadata["chunkCount"] = job.chunk_count
                 metadata["authoritativeModelRunId"] = job.model_run_id
+                metadata["forceRetranscribe"] = False
+                metadata["normalizedAudio"] = self.config.normalize_audio
+                metadata["normalizationFilter"] = self.config.normalization_filter
+                metadata["vadFilter"] = effective_vad_filter
+                metadata["retriedWithoutVad"] = retried_without_vad
 
                 cur.execute(
                     """
@@ -707,6 +803,7 @@ class AsrWorker:
                 session_row = cur.fetchone()
                 metadata = dict(session_row["metadata"] or {}) if session_row is not None else {}
                 metadata["awaitingFinalTranscript"] = False
+                metadata["forceRetranscribe"] = False
                 metadata["transcriptionFailedAt"] = failure_time
                 metadata["errorMessage"] = error_message
                 metadata["finalizedBy"] = "asr-worker"
@@ -759,9 +856,21 @@ class AsrWorker:
                 "[asr-worker] transcribing authoritative session audio "
                 f"session={job.session_id} path={merged_audio_path}"
             )
-            segments = self.transcribe(merged_audio_path)
+            segments, effective_vad_filter, retried_without_vad = self.transcribe(merged_audio_path)
+            if len(segments) == 0:
+                raise RuntimeError(
+                    "Authoritative final ASR produced no transcript segments after normalization and VAD fallback."
+                )
             latency_ms = max(0, int((time.monotonic() - started) * 1000))
-            self.persist_success(job, merged_audio_path, segments, latency_ms, source_storage_mode)
+            self.persist_success(
+                job,
+                merged_audio_path,
+                segments,
+                effective_vad_filter,
+                retried_without_vad,
+                latency_ms,
+                source_storage_mode,
+            )
         except Exception as error:
             latency_ms = max(0, int((time.monotonic() - started) * 1000))
             message = str(error)

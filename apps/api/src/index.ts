@@ -792,7 +792,8 @@ const server = createServer((req, res) => {
       internalMutationContract: {
         header: HOSTED_REQUEST_HEADERS.internalApiKey,
         modelRunsRoute: "POST /sessions/:id/model-runs",
-        eventsRoute: "POST /sessions/:id/events"
+        eventsRoute: "POST /sessions/:id/events",
+        reprocessFinalAsrRoute: "POST /internal/sessions/:id/reprocess-final-asr"
       },
       transcriptContract: {
         route: "GET /sessions/:id/transcript",
@@ -812,6 +813,30 @@ const server = createServer((req, res) => {
       },
       stopContract: "POST /sessions/:id/stop"
     });
+    return;
+  }
+
+  const internalReprocessSessionMatch = /^\/internal\/sessions\/([^/]+)\/reprocess-final-asr$/.exec(url.pathname);
+  if (internalReprocessSessionMatch && req.method === "POST") {
+    if (!requireInternalApiKey(req, res)) {
+      return;
+    }
+
+    const sessionId = decodeURIComponent(internalReprocessSessionMatch[1]);
+    void repository
+      .reprocessFinalAsrSession(sessionId)
+      .then((session) => {
+        writeJson(res, 200, {
+          session,
+          reprocessQueued: true,
+          route: "reprocess-final-asr"
+        });
+      })
+      .catch((error) => {
+        writeJson(res, 409, {
+          message: error instanceof Error ? error.message : "Unable to queue session for final ASR reprocessing."
+        });
+      });
     return;
   }
 

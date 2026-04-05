@@ -69,11 +69,13 @@ The active product reset is accuracy-first and post-call:
 1. capture real audio in the browser
 2. store raw chunks on the local filesystem
 3. assemble one merged session artifact after capture ends
-4. run `faster-whisper` with `large-v3` on the merged audio
+4. normalize the merged session audio for quiet speech and run `faster-whisper` with `large-v3` on the final artifact
 5. generate one final summary from the authoritative transcript
 6. review transcript, summary, and action items from Supabase-backed session history
 
 Live notes are legacy scaffolding and are not part of the target MVP.
+
+For the authoritative final pass, VAD is disabled by default and the ASR worker keeps an internal reprocess path for sessions that ended with uploaded audio but no usable transcript segments.
 
 ## Legacy Prototype
 
