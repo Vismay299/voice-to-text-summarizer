@@ -61,6 +61,7 @@ public struct TranscribedUtterance: Codable, Hashable, Identifiable, Sendable {
     public let segments: [TranscribedUtteranceSegment]
     public let cleanedText: String?
     public let mode: DictationMode?
+    public let detectedCommands: [VoiceCommand]
 
     public init(
         id: UUID,
@@ -74,7 +75,8 @@ public struct TranscribedUtterance: Codable, Hashable, Identifiable, Sendable {
         text: String,
         segments: [TranscribedUtteranceSegment],
         cleanedText: String? = nil,
-        mode: DictationMode? = nil
+        mode: DictationMode? = nil,
+        detectedCommands: [VoiceCommand] = []
     ) {
         self.id = id
         self.capturedAt = capturedAt
@@ -88,6 +90,7 @@ public struct TranscribedUtterance: Codable, Hashable, Identifiable, Sendable {
         self.segments = segments
         self.cleanedText = cleanedText
         self.mode = mode
+        self.detectedCommands = detectedCommands
     }
 
     /// The display text — cleaned if available, raw as fallback.

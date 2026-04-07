@@ -293,7 +293,120 @@ Task { @MainActor in
         }
     }
 
-    // MARK: - TranscriptCleaner Tests
+    // MARK: - VoiceCommandParser Tests
+
+    let cmdParser = VoiceCommandParser()
+    let cleanerForCmds = TranscriptCleaner()
+
+    // --- Command Detection Tests ---
+
+    // new line
+    let nlResult = cmdParser.parse("new line")
+    expect(nlResult.commands.contains(.newLine), "Should detect 'new line' as newLine command")
+    expect(nlResult.cleanedText == "\n", "Should replace 'new line' with newline")
+
+    // newline variant
+    let nlVar = cmdParser.parse("newline")
+    expect(nlVar.commands.contains(.newLine), "Should detect 'newline' variant")
+
+    // new paragraph
+    let npResult = cmdParser.parse("new paragraph")
+    expect(npResult.commands.contains(.newLine), "Should detect 'new paragraph' as newLine")
+
+    // slash command (standalone)
+    let slashResult = cmdParser.parse("slash command")
+    expect(slashResult.commands.contains(.slashCommand), "Should detect 'slash command'")
+    expect(slashResult.cleanedText == "/", "Should replace 'slash command' with /")
+
+    // bare "slash" should NOT trigger
+    let bareSlash = cmdParser.parse("slash")
+    expect(!bareSlash.commands.contains(.slashCommand), "Bare 'slash' alone should not trigger")
+
+    // open quote
+    let oqResult = cmdParser.parse("open quote")
+    expect(oqResult.commands.contains(.openQuote), "Should detect 'open quote'")
+    expect(oqResult.cleanedText == "\"", "Should replace 'open quote' with quote")
+
+    // open quotes
+    let oqsResult = cmdParser.parse("open quotes")
+    expect(oqsResult.commands.contains(.openQuote), "Should detect 'open quotes' variant")
+
+    // code block
+    let cbResult = cmdParser.parse("code block")
+    expect(cbResult.commands.contains(.codeBlock), "Should detect 'code block'")
+    expect(cbResult.cleanedText == "`", "Should replace 'code block' with backtick")
+
+    // --- Multiple Commands ---
+
+    // two commands — second command preceded by space, not a boundary, won't match
+    let multiResult = cmdParser.parse("new line open quote hello")
+    expect(multiResult.commands.count == 1, "Should detect 1 command (first at start), got \(multiResult.commands.count)")
+    expect(multiResult.commands.contains(.newLine), "Multi-command should contain newLine")
+
+    // commands at boundaries (second one preceded by space, not a sentence boundary — won't match)
+    let boundResult = cmdParser.parse("new line hello world new line")
+    expect(boundResult.commands.count == 1, "Should detect 1 command (first at start), got \(boundResult.commands.count)")
+
+    // command at end
+    let endResult = cmdParser.parse("hello world new line")
+    // "new line" is preceded by "d " — not a boundary. This is correct behavior.
+    // Commands should be spoken as standalone utterances, not embedded in speech.
+    expect(endResult.commands.isEmpty, "Command preceded by word (not boundary) should not trigger")
+
+    // command preceded by period
+    let dotResult = cmdParser.parse("hello world. new line")
+    expect(dotResult.commands.count == 1, "Command after period should trigger, got \(dotResult.commands)")
+
+    // command only
+    let onlyResult = cmdParser.parse("new line")
+    expect(onlyResult.commands.count == 1, "Command-only input should detect 1 command")
+
+    // --- False Positive Prevention ---
+
+    // "a new line of code" should NOT trigger (embedded in sentence)
+    let fpNewLine = cmdParser.parse("a new line of code")
+    expect(!fpNewLine.commands.contains(.newLine), "Should NOT false-positive on 'a new line of code': detected \(fpNewLine.commands)")
+
+    // "the code block failed" should NOT trigger
+    let fpCode = cmdParser.parse("the code block failed")
+    expect(!fpCode.commands.contains(.codeBlock), "Should NOT false-positive on 'the code block failed': detected \(fpCode.commands)")
+
+    // "slash through the defense" — should NOT trigger without bare "slash" phrase
+    let fpSlashResult = cmdParser.parse("slash through the defense")
+    expect(!fpSlashResult.commands.contains(.slashCommand), "Bare 'slash' removed — 'slash through the defense' should not trigger")
+
+    // --- Edge Cases ---
+
+    // Case insensitive
+    let caseResult = cmdParser.parse("NEW LINE")
+    expect(caseResult.commands.contains(.newLine), "Should detect 'NEW LINE' case-insensitively")
+
+    // Overlapping phrases: "new paragraph" wins over "new line" at same position
+    let overlapResult = cmdParser.parse("new paragraph hello")
+    expect(overlapResult.commands.count == 1, "Overlapping phrases should deduplicate, got \(overlapResult.commands.count)")
+    expect(overlapResult.commands.contains(.newLine), "Should detect newLine from 'new paragraph'")
+
+    // Mixed case
+    let mixedCase = cmdParser.parse("New Line")
+    expect(mixedCase.commands.contains(.newLine), "Should detect 'New Line' mixed case")
+
+    // Empty input
+    let emptyCmd = cmdParser.parse("")
+    expect(emptyCmd.commands.isEmpty, "Empty input should produce no commands")
+    expect(emptyCmd.cleanedText.isEmpty, "Empty input should produce empty cleaned text")
+
+    // No commands
+    let noCmd = cmdParser.parse("just normal text here")
+    expect(noCmd.commands.isEmpty, "Normal text should produce no commands")
+    expect(noCmd.cleanedText == "just normal text here", "Normal text should be unchanged")
+
+    // --- Integration with Cleaner ---
+
+    // Cleaned text then parsed: simulate the real pipeline
+    let rawPipeline = "um so new line can you run the tests"
+    let cleaned = cleanerForCmds.clean(rawPipeline, mode: .terminal)
+    let pipedCmd = cmdParser.parse(cleaned)
+    expect(pipedCmd.commands.contains(.newLine), "Pipeline: newLine should survive cleaner -> parser")
 
     let cleaner = TranscriptCleaner()
 

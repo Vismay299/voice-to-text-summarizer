@@ -115,12 +115,31 @@ public struct SettingsView: View {
             }
 
             Section("Upcoming phases") {
-                Text("Phase 12.5 will clean the transcript for Terminal and Writing modes.")
-                Text("Phase 12.6 will add deterministic spoken formatting commands.")
                 Text("Phase 12.7 will insert dictated text into the focused terminal or text field without pressing Enter.")
             }
             .font(.callout)
             .foregroundStyle(.secondary)
+
+            Section("Voice Commands") {
+                Text("Say these phrases while dictating to insert special characters or formatting.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                ForEach(VoiceCommand.allCases) { command in
+                    HStack {
+                        Text("\"\(command.spokenPhrase)\"")
+                            .font(.body.monospaced())
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Image(systemName: "arrow.right")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(command.insertionText)
+                            .font(.body.monospaced().weight(.semibold))
+                            .foregroundStyle(.indigo)
+                    }
+                }
+            }
         }
         .formStyle(.grouped)
         .padding(20)

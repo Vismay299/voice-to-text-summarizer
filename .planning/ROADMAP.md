@@ -550,7 +550,7 @@ These are the next GSD-sized executable phases for the dictation pivot. Each pha
 
 ## Current Focus
 
-Active line: Phase 12.6 next: deterministic voice-command parsing (`new line`, `slash command`, `open quote`, `code block`).
+Active line: Phase 12.7 next: terminal-safe focused-input insertion without auto-submitting.
 
 ## Next Up
 
@@ -594,6 +594,7 @@ Active line: Phase 12.6 next: deterministic voice-command parsing (`new line`, `
 - 2026-04-05: Phase 12.4 is complete with one final local transcript per saved utterance, a bundled Python `faster-whisper + large-v3` bridge, serialized transcription queueing, persisted transcript JSON artifacts, and an opt-in real `large-v3` smoke transcription check.
 - 2026-04-06: `large-v3` remains locked as the model, but the long-term local runtime is now gated on a Phase `12.4.1` benchmark between the current `faster-whisper` CPU path and an `MLX Whisper` Apple Silicon path.
 - 2026-04-06: Phase 12.5 is complete with `Terminal` and `Writing` cleanup modes wired into the transcription pipeline, persisted per-transcription, selectable in Settings and the menu bar panel, displayed with mode badges in History, and covered by 18 test assertions in the self-test runner.
+- 2026-04-06: Phase 12.6 is complete with deterministic voice-command parsing (`new line`, `slash command`, `open quote`, `code block`), sentence-boundary detection to prevent false positives, command badges in HistoryView, command reference card in SettingsView, and 24 test assertions covering detection, false-positive prevention, edge cases, and pipeline integration.
 
 ## Session Restart Notes
 

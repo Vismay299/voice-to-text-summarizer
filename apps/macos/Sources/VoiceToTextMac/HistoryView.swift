@@ -102,6 +102,22 @@ public struct HistoryView: View {
                 }
             }
 
+            // Voice command badges
+            if !item.detectedCommands.isEmpty {
+                Divider()
+                    .padding(.vertical, 2)
+
+                HStack(spacing: 4) {
+                    Text("Commands:")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    ForEach(item.detectedCommands) { cmd in
+                        commandBadge(cmd)
+                    }
+                }
+            }
+
             Text("\(item.language.uppercased()) • \(item.segments.count) segments • \(String(format: "%.2fs", item.durationSeconds))")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -171,5 +187,17 @@ public struct HistoryView: View {
         .padding(.vertical, 2)
         .background(mode.badgeColor.opacity(0.12))
         .clipShape(Capsule())
+    }
+
+    // MARK: - Command Badge
+
+    private func commandBadge(_ command: VoiceCommand) -> some View {
+        Text(command.displayName.uppercased())
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(Color.indigo)
+            .clipShape(Capsule())
     }
 }

@@ -8,6 +8,7 @@ public final class UtteranceTranscriptionService: ObservableObject {
     private let bridge: UtteranceTranscriptionBridging
     private let store: TranscribedUtteranceStore
     private let cleaner: TranscriptCleaner
+    private let commandParser: VoiceCommandParser
     private var queuedArtifacts: [(artifact: CapturedUtteranceArtifact, mode: DictationMode)] = []
     private var isProcessingQueue = false
     private var activeArtifactID: UUID?
@@ -16,7 +17,8 @@ public final class UtteranceTranscriptionService: ObservableObject {
     public init(
         bridge: UtteranceTranscriptionBridging? = nil,
         store: TranscribedUtteranceStore = TranscribedUtteranceStore(),
-        cleaner: TranscriptCleaner = TranscriptCleaner()
+        cleaner: TranscriptCleaner = TranscriptCleaner(),
+        commandParser: VoiceCommandParser = VoiceCommandParser()
     ) {
         if let bridge {
             self.bridge = bridge
@@ -28,6 +30,7 @@ public final class UtteranceTranscriptionService: ObservableObject {
         }
         self.store = store
         self.cleaner = cleaner
+        self.commandParser = commandParser
     }
 
     public func bootstrap() {
@@ -86,6 +89,8 @@ public final class UtteranceTranscriptionService: ObservableObject {
             do {
                 let raw = try await bridge.transcribe(nextArtifact)
                 let cleaned = cleaner.clean(raw.text, mode: mode)
+                let commandResult = commandParser.parse(cleaned)
+                let finalText = commandResult.cleanedText.isEmpty ? nil : commandResult.cleanedText
                 let transcriptURL = try store.transcriptURL(for: nextArtifact.id)
                 let transcription = TranscribedUtterance(
                     id: nextArtifact.id,
@@ -98,8 +103,9 @@ public final class UtteranceTranscriptionService: ObservableObject {
                     durationSeconds: raw.durationSeconds,
                     text: raw.text,
                     segments: raw.segments,
-                    cleanedText: cleaned.isEmpty ? nil : cleaned,
-                    mode: mode
+                    cleanedText: finalText,
+                    mode: mode,
+                    detectedCommands: commandResult.commands
                 )
                 try store.persist(transcription)
                 recentTranscriptions.removeAll { $0.id == transcription.id }
