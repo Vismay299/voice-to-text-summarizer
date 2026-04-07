@@ -1,553 +1,606 @@
 # Master Execution Roadmap: Voice-to-Text Summarizer
 
-> Status: Planning reset for local-first rebuild
+> Status: Planning reset for macOS universal dictation
 >
-> Last updated: 2026-04-04
+> Last updated: 2026-04-05
 
-Voice-to-Text Summarizer is now planned as a local-first, production-oriented AI application: a web-first product that captures conversation audio on the user's machine, prioritizes a highly accurate final transcript over realtime note-taking, generates one post-call summary from the finished transcript, and stores everything locally instead of depending on cloud infrastructure or prototype-only session state.
+Voice-to-Text Summarizer is now planned as a local-first macOS dictation product: a push-to-talk app that captures microphone audio on the user's machine, transcribes it locally with `faster-whisper + large-v3`, cleans the text for the active context, and inserts the result into the currently focused text input without automatically pressing Enter.
 
-The current repository is still useful, but it is not the target system. It contains a web UI scaffold, a local companion prototype, a local JSON archive, browser speech recognition experiments, and meeting-helper proof-of-concept flows. Those artifacts are legacy baseline code, not proof that the final local-first AI architecture is already built.
+The current repository is still useful, but it is no longer primarily a meeting-summary product. It contains a web UI shell, local API and worker infrastructure, session history concepts, and real local ASR work that can be reused. It also contains legacy meeting-summary assumptions that should now be treated as background context, not the active product direction.
 
 Source of truth:
 - `ROADMAP.md` is the main planning and session continuity document.
 - `PROJECT.md` remains background context and original project framing.
-- `STATE.md` is secondary and can lag behind this file.
+- `STATE.md` is secondary and may lag behind this file.
 
 ## Vision
 
-Build a fast, accurate conversation intelligence product that lets a user stay focused during a call while the system captures the audio locally, transcribes it with production-grade open-weight speech models, produces an authoritative final transcript plus a clear final summary after the call, and makes the entire session reviewable later from a Supabase-backed application with local audio artifacts.
+Build a fast, accurate local dictation layer for macOS that lets a user speak anywhere they would normally type, especially inside terminal-based AI tools, and have clean text inserted directly at the current cursor with zero cloud dependency.
 
 ## Product Goal
 
 The MVP succeeds when all of the following are true:
-- A user can start a session from the web app and capture microphone audio reliably.
-- Audio is captured and processed locally on the user's machine.
-- The backend produces an accurate final transcript after the session ends using the real recorded audio, not placeholder content.
-- The system generates one final summary from the completed transcript; live notes are not required for MVP.
-- Completed sessions are persisted in Supabase Postgres and raw audio is stored locally.
-- A user can reopen past sessions and review transcript and summary without relying on local JSON files.
-- The architecture is ready for mobile and future meeting capture expansion without a full redesign.
+- A user can hold one global push-to-talk hotkey from anywhere in macOS.
+- The app records microphone audio locally and transcribes it locally with `large-v3`.
+- The transcript is cleaned according to the active mode before insertion.
+- The app can insert text into the currently focused input without auto-submitting it.
+- Terminal usage is safe by default:
+  - no automatic Enter press
+  - no automatic command execution
+- Voice commands work for core formatting cases:
+  - `new line`
+  - `slash command`
+  - `open quote`
+  - `code block`
+- The app keeps local snippet history so the user can review, copy, and resend dictated text.
+- The entire MVP runs locally and stays free to operate.
 
 ## Current Truth
 
-- The repo currently contains a TypeScript monorepo with `apps/web`, `apps/companion`, and `packages/shared`.
-- The current web UI is a useful shell for session control and transcript/history presentation.
-- The local companion server is prototype scaffolding, not the final production backend.
-- Local JSON persistence under `.voice-to-text-summarizer/` is temporary scaffolding and must not be treated as product storage.
-- Browser `SpeechRecognition` / `webkitSpeechRecognition` is temporary scaffolding and must not be treated as the final transcription backend.
-- The old runtime selector from the prototype era still exists in some UI surfaces, but the local ASR worker now runs real `faster-whisper` inference and the browser speech recognition path is no longer the target architecture.
-- The local ASR worker now processes stored session audio from the local filesystem or Supabase-backed artifact store and persists transcript segments plus model-run metrics.
-- The repo still contains live-note and rolling-summary logic from the previous product direction, but live notes are no longer part of the target MVP.
-- The ASR plan now standardizes on `large-v3` only; there is no planned `large-v3-turbo` fallback in the MVP architecture.
-- Meeting-helper and experimental Google Meet flows are exploratory UI/prototype work and are not real production capture paths.
-- Existing code may be reused selectively for UI, shared types, and session concepts, but the roadmap assumes a local-first rebuild of the backend path.
+- The repo currently contains a TypeScript monorepo with `apps/web`, `apps/api`, `apps/companion`, `services/asr-worker`, `services/summary-worker`, and `packages/shared`.
+- The strongest reusable assets in the current codebase are:
+  - local audio capture and chunk handling concepts
+  - local `faster-whisper` integration
+  - status/history/persistence patterns
+  - shared contracts and worker boundaries
+- The current product shell is still shaped around session capture, transcript review, and summary history rather than universal dictation into the focused app.
+- There is no real macOS-native shell yet for:
+  - global hotkeys
+  - accessibility permission handling
+  - focused-app detection
+  - direct text insertion at the current cursor
+- The current meeting-helper and Google Meet work is parked. It is legacy exploration, not active roadmap scope.
+- Final-summary logic and session history are still useful as future optional features, but they are no longer the center of the MVP.
+- The ASR plan remains standardized on `large-v3` only. There is no planned `large-v3-turbo` fallback in the MVP architecture.
+- Existing code may be reused selectively, but the roadmap now assumes a product pivot toward universal dictation rather than meeting summarization.
 
 ## Target Architecture
 
-Locked defaults for the local-first rebuild:
+Locked defaults for the new local-first dictation MVP:
 
 | Layer | Default Choice | Notes |
 | --- | --- | --- |
-| Frontend | Web app first | Keep the web product as the main operator surface for MVP. |
-| Web client stack | Existing TypeScript/Vite frontend | Reuse the current client shell instead of adding framework churn in MVP. |
-| Backend API | Local service on the user's machine | CPU service responsible for sessions, uploads, history reads, and realtime stream orchestration. |
-| Transcription backend | `faster-whisper` | Primary ASR runtime for local transcription. |
-| Default ASR model | `large-v3` | Accuracy-first default for the authoritative final transcript. |
-| Summarization LLM | `Qwen2.5-7B-Instruct` | Default local summary/action extraction model. |
-| Stronger later summary model | `Mistral Small 3.1 24B` | Upgrade path if summary quality needs more headroom. |
-| LLM serving runtime | `Ollama` or direct local runtime | Keep the summary model local and simple to run. |
-| Database | Supabase Postgres | System of record for sessions, transcript segments, summaries, and jobs. |
-| Object storage | Local filesystem | Durable raw audio and generated artifact storage. |
-| Hosting target | Local machine | No GCP or paid cloud services required for MVP. |
-| Queue/event transport | Local polling / in-process jobs | Keep the first working loop simple and local. |
-| Realtime delivery | SSE or local callbacks | Used for recording/processing/final-status updates and optional provisional transcript UX. |
-| Persistence rule | Local database plus filesystem | No JSON archive as product storage. |
-| Desktop companion role | Optional local helper | Future helper for system-audio capture, but not required for the first local MVP. |
+| Product surface | macOS menu bar app | Lightweight always-available UX for dictation from anywhere. |
+| Platform | macOS only | Keep v1 narrow and reliable. |
+| Capture model | Push-to-talk only | No always-listening behavior in MVP. |
+| Input source | Local microphone | The first real path; richer capture modes can come later. |
+| ASR runtime | `faster-whisper` now, `MLX Whisper` under benchmark in `12.4.1` | Keep the current CPU bridge working while we evaluate the Apple Silicon path and keep the better one. |
+| ASR model | `large-v3` | Accuracy-first default for every dictated utterance. |
+| Cleanup modes | `Terminal` and `Writing` | Terminal mode stays closer to the source; Writing mode cleans more aggressively. |
+| Command handling | Deterministic parser | Voice commands should map predictably, not through fuzzy LLM behavior. |
+| Insertion engine | macOS Accessibility APIs first | Use focused-element insertion when possible. |
+| Insertion fallback | Simulated key events / paste path | Used only when focused-element insertion is not reliable enough. |
+| History store | Local SQLite | Free, local, and sufficient for snippet history. |
+| Artifact storage | Local filesystem | Raw audio and optional debug artifacts stay local. |
+| Cloud dependency | None for MVP | No GCP, no paid APIs, no required Supabase path for v1. |
+| Summary feature | Optional later | Not part of the main v1 dictation flow. |
 
-Non-goals for the local MVP:
-- No reliance on local JSON archives as durable product storage.
-- No reliance on browser speech recognition as the core ASR path.
-- No live notes in the MVP product.
-- No Google Meet bot or hidden participant workflow in MVP.
-- No cloud infrastructure required in the first local milestone.
+Non-goals for the new MVP:
+- No Google Meet bot or meeting-assistant workflow.
+- No cloud-hosted transcription or summary service.
+- No automatic command execution in terminals.
+- No automatic Enter press after insertion.
+- No requirement to support every rich editor perfectly in v1.
+- No mobile client in the initial milestone.
 
 ## Core Systems
 
-### 1. Web Client
-- Starts and stops sessions.
-- Captures microphone audio with `MediaRecorder`.
-- Sends chunked audio to the local backend.
-- Subscribes to status updates over SSE or local events.
-- Renders session status, transcript, summary, and history.
+### 1. macOS Shell
+- Runs as a menu bar app with a small preferences surface.
+- Registers the global push-to-talk hotkey.
+- Requests and checks microphone permission.
+- Requests and checks Accessibility permission.
+- Shows a minimal floating overlay for:
+  - recording
+  - transcribing
+  - inserting
+  - error states
 
-### 2. API Service
-- Runs as the main local application backend on the user's machine.
-- Creates sessions and returns upload/session metadata to the client.
-- Accepts audio chunk uploads and records chunk metadata.
-- Records transcript and summary work in Supabase Postgres or filesystem-backed store.
-- Serves session history, session detail, and SSE feeds.
+### 2. Dictation Capture Pipeline
+- Starts recording when the hotkey is held.
+- Stops recording when the hotkey is released.
+- Writes one local utterance artifact per dictation event.
+- Keeps capture flow lightweight enough for repeated use all day.
 
-### 3. Audio Storage Layer
-- Stores raw audio chunks on the local filesystem.
-- Keeps ordered chunk metadata in Supabase Postgres.
-- Supports later reprocessing and debugging without losing raw source data.
+### 3. Local ASR Engine
+- Runs `large-v3` through the current local bridge.
+- Benchmarks the current `faster-whisper` path against an `MLX Whisper` path on Apple Silicon before locking the long-term runtime.
+- Produces one final transcript per utterance.
+- Prefers accuracy over near-live partial text.
+- Captures timing and failure metadata for tuning.
 
-### 4. Audio Preparation Layer
-- Merges recorded chunks into a session-level audio artifact after the call ends.
-- Normalizes audio format for consistent ASR input.
-- Runs VAD / speech-presence filtering before the final transcription pass.
-- Preserves the original raw chunks for debugging and future reprocessing.
+### 4. Text Cleanup Layer
+- Takes the raw transcript and transforms it based on active mode.
+- `Terminal` mode:
+  - preserve intent closely
+  - minimal smoothing
+  - avoid over-rewriting
+- `Writing` mode:
+  - fix punctuation
+  - remove filler words where appropriate
+  - make prose more readable
 
-### 5. ASR Worker
-- Runs `faster-whisper` with `large-v3` for the authoritative final transcript.
-- Polls the local store for sessions ready for final transcription.
-- Resolves merged session audio from the local filesystem.
-- Produces timestamped transcript segments from the finished recording.
-- Writes transcript segments and model-run metadata to Supabase Postgres.
+### 5. Voice Command Layer
+- Detects and transforms deterministic spoken commands.
+- Initial commands:
+  - `new line`
+  - `slash command`
+  - `open quote`
+  - `code block`
+- Should operate before insertion, and should be auditable in the snippet result.
 
-### 6. Summary Worker
-- Runs `Qwen2.5-7B-Instruct` via a local runtime such as `Ollama`.
-- Runs only after the final transcript is complete.
-- Writes one final summary plus action items/decisions to Supabase Postgres.
+### 6. Universal Insertion Engine
+- Detects the currently focused app and editable element.
+- Inserts text directly at the current cursor when possible.
+- Never submits the terminal automatically.
+- Falls back gracefully when an app exposes weak editing hooks.
 
-### 7. Persistence Layer
-- Supabase Postgres stores all structured session state.
-- The filesystem stores all audio blobs and exportable artifacts.
-- No product feature should depend on JSON files in the repo or local filesystem.
-
-### 8. Realtime Delivery Layer
-- API exposes SSE streams keyed by session ID.
-- Recording/processing/final-result updates are emitted as the session moves through the pipeline.
-- Any live transcript shown during capture is explicitly provisional; the final transcript from the post-call pass is authoritative.
-- Client reconnects cleanly without losing the canonical timeline because the source of truth is in Supabase Postgres.
+### 7. Local History Layer
+- Stores dictated snippets, insertion outcomes, timestamps, and mode used.
+- Allows review, copy, resend, and debugging.
+- Uses SQLite as the structured store of record for v1.
 
 ## Data Model
 
-### `users`
-- The account/operator using the system.
-- MVP can start single-user, but the schema should still allow future multi-user expansion.
+### `app_settings`
+- Stores user preferences for:
+  - push-to-talk hotkey
+  - default mode
+  - overlay behavior
+  - audio device
+  - cleanup toggles
 
-### `sessions`
-- One row per conversation session.
-- Stores session ID, user ID, source type, status, start/end timestamps, and top-level model configuration.
+### `utterances`
+- One row per push-to-talk recording.
+- Stores:
+  - start/end timestamps
+  - mode
+  - source device
+  - app target metadata
+  - status
 
-### `audio_chunks`
-- One row per uploaded chunk.
-- Stores session ID, chunk sequence number, storage path, duration, uploaded timestamp, and processing status.
+### `utterance_artifacts`
+- Artifact references for one utterance.
+- Stores:
+  - raw audio path
+  - normalized audio path if used
+  - debug metadata
 
-### `transcript_segments`
-- One row per finalized transcript segment.
-- Stores session ID, source audio reference, sequence number, text, start/end offsets, confidence, and ASR metadata.
+### `transcripts`
+- Final transcript result for an utterance.
+- Stores:
+  - utterance ID
+  - text
+  - model name
+  - runtime
+  - latency
+  - confidence metadata if available
 
-### `session_summaries`
-- Final summary plus structured summary sections.
-- Stores overview, key points, optional follow-ups, generation timestamp, and summary model metadata.
+### `insertions`
+- Records insertion attempts and outcomes.
+- Stores:
+  - utterance ID
+  - target app bundle identifier
+  - target app name
+  - insertion strategy used
+  - success/failure status
+  - error details if any
 
-### `action_items`
-- Structured follow-up tasks extracted from transcript/summary.
-- Stores session ID, text, status, and provenance.
+### `snippet_history`
+- User-facing history of dictated output.
+- Stores:
+  - final inserted text
+  - cleaned text
+  - raw transcript
+  - mode
+  - created timestamp
+  - resend / copy metadata
 
-### `model_runs`
-- Audit trail for ASR and summary jobs.
-- Stores session ID, model name, runtime, latency, status, and error details.
-
-### `session_events`
-- Operational event log for upload, transcription, summary, retry, and failure events.
-- Supports debugging and live feed fan-out.
+### `events`
+- Operational event log for:
+  - recording started
+  - recording ended
+  - transcription started
+  - transcription completed
+  - insertion attempted
+  - insertion completed
+  - insertion failed
 
 ## End-to-End Pipeline
 
-1. User opens the web app and starts a new session.
-2. API creates a `session` record in Postgres and returns session metadata to the client.
-3. Web client captures microphone or supported display audio using `MediaRecorder`.
-4. Client emits chunked audio during the conversation and uploads it to the local backend.
-5. Backend stores each chunk in the local filesystem and records a matching `audio_chunks` row in Supabase Postgres.
-6. When the session ends, the backend marks capture complete and assembles a session-level merged audio artifact.
-7. Audio preparation normalizes the merged recording and applies VAD / speech filtering before final ASR.
-8. ASR worker runs `faster-whisper large-v3` on the finished session audio and writes the authoritative transcript to `transcript_segments`.
-9. Summary worker runs once on the final transcript and writes the final summary plus extracted action items to Supabase Postgres.
-10. API streams processing-state and final-summary readiness to the client.
-11. User reopens the session later and the web app reconstructs the final transcript and summary from Supabase Postgres plus filesystem-backed artifacts.
+1. User focuses any editable text input, including a terminal prompt.
+2. User holds the global push-to-talk hotkey.
+3. The macOS app starts local microphone capture.
+4. User releases the hotkey.
+5. The app finalizes one utterance audio artifact locally.
+6. The ASR engine runs the current `large-v3` local bridge on that utterance.
+7. If Phase `12.4.1` is active, the app can benchmark the utterance against both `faster-whisper` and `MLX Whisper` on the same machine.
+8. The raw transcript is passed through the cleanup layer according to active mode.
+9. The voice command layer converts supported spoken commands into formatting/output tokens.
+10. The insertion engine detects the focused app and attempts direct cursor insertion.
+11. The app inserts the text without pressing Enter.
+12. The utterance, transcript, insertion result, and final snippet are stored in local SQLite.
+13. The user can reopen recent snippet history, copy text, or resend it.
 
 ## Execution Series
 
-### Series 1: Platform Foundation
+### Series 1: Product Reset and Legacy Carve-Out
 
 **Goal**
-- Establish the local service layout and runtime baseline for the real product.
+- Reset the project around universal dictation and freeze the previous meeting-summary work as legacy background.
 
 **Why it exists**
-- The current repo only contains prototype app shells and local scaffolding. The local-first rebuild needs clear service boundaries before implementation starts.
+- The repo currently points in two directions. We need one primary product before implementation continues.
 
 **Depends on**
-- Nothing. This is the first execution series.
+- Nothing. This is the active planning reset.
 
 **What gets built**
-- Repo structure for a local-first system:
-  - `apps/web`
-  - `apps/api`
-  - `services/asr-worker`
-  - `services/summary-worker`
-  - `packages/shared`
-- Shared environment strategy with `.env.example`.
-- Local runtime packaging and startup scripts for the app, API, and workers.
-- Clear service contracts between client, API, and workers.
+- Updated roadmap and product language.
+- Clear separation between:
+  - active dictation MVP
+  - legacy meeting-summary code
+- Initial decision log for:
+  - push-to-talk
+  - terminal-safe insertion
+  - local-only architecture
+  - mode system
 
 **Definition of done**
-- Service boundaries are locked and reflected in the repo.
-- Every major runtime has a defined responsibility and deployment target.
-- No remaining ambiguity about whether the local-first architecture is the primary path.
+- The roadmap no longer frames Google Meet or meeting summaries as the active MVP.
+- Future sessions can resume from this file without reopening product direction.
 
 **What it deliberately does not cover**
-- Actual database schema.
-- Actual audio capture implementation.
-- Actual model inference logic.
+- Any new runtime code.
 
-### Series 2: Data and Persistence
+### Series 2: macOS App Shell
 
 **Goal**
-- Replace ad hoc local file storage assumptions with a real persistence model.
+- Create the native shell that can run continuously in the menu bar.
 
 **Why it exists**
-- Durable storage is required before transcript and summary pipelines can be trusted.
+- Universal dictation needs OS-level presence that the current web shell cannot provide.
 
 **Depends on**
 - Series 1.
 
 **What gets built**
-- PostgreSQL schema for users, sessions, audio chunks, transcript segments, summaries, action items, model runs, and session events.
-- Migration strategy and first migration set.
-- Local filesystem layout:
-  - raw chunk objects
-  - merged session audio
-  - optional exported transcripts/summaries
-- API persistence logic for session creation and audio chunk metadata.
+- Menu bar app shell.
+- Preferences window or lightweight settings panel.
+- App lifecycle and background operation behavior.
+- Minimal overlay window for status feedback.
 
 **Definition of done**
-- A session can be created and stored in Postgres.
-- Audio chunks can be registered and resolved to local filesystem paths.
-- History data no longer depends conceptually on local JSON.
+- The app launches on macOS and remains available from the menu bar.
+- There is a visible status surface for recording and transcription state.
 
 **What it deliberately does not cover**
-- Transcription inference.
-- Summary generation.
-- Realtime client delivery.
+- Actual ASR.
+- Actual insertion into external apps.
 
-### Series 3: Audio Ingestion
+### Series 3: Permissions and Global Hotkey
 
 **Goal**
-- Capture real microphone audio in the browser and push it into the local backend.
+- Make the app able to listen for push-to-talk and control other apps safely.
 
 **Why it exists**
-- A real AI pipeline starts with real audio ingestion, not browser speech recognition text.
+- Without microphone and Accessibility permissions, the product cannot exist.
 
 **Depends on**
-- Series 1 and Series 2.
+- Series 2.
 
 **What gets built**
-- Web client microphone capture using `MediaRecorder`.
-- Session-linked chunk upload flow to API.
-- Chunk sequencing, overlap strategy, and upload retries.
-- Clear client states:
-  - recording
-  - uploading
-  - retrying
-  - paused/error
-- Server-side validation of chunk ordering and upload completeness.
+- Microphone permission flow.
+- Accessibility permission flow.
+- Trusted-state checks and recovery prompts.
+- Global hotkey registration.
 
 **Definition of done**
-- Starting a session results in real audio chunks landing in local storage.
-- The client can recover from transient upload failures.
-- Every uploaded chunk can be traced to one session row.
+- User can grant permissions once and reliably trigger dictation from any app.
 
 **What it deliberately does not cover**
-- System-audio capture.
-- Meeting-platform capture.
-- Final transcript generation.
+- Transcription quality.
+- Text insertion behavior.
 
-### Series 4: Transcription Service
+### Series 4: Local Utterance Capture
 
 **Goal**
-- Turn stored audio into an accurate final transcript using local Whisper inference.
+- Record one utterance cleanly for each hotkey hold/release cycle.
 
 **Why it exists**
-- This is the core intelligence layer for the product and replaces all fake transcript behavior.
+- The product needs short, reliable, repeatable capture rather than long session recording.
 
 **Depends on**
-- Series 1, Series 2, and Series 3.
+- Series 2 and Series 3.
 
 **What gets built**
-- Python ASR worker using `faster-whisper`.
-- Default model: `large-v3`.
-- Session-level merged audio resolution from the local filesystem.
-- Audio normalization and VAD before the authoritative final pass.
-- Final transcript persistence in Supabase Postgres.
-- Model-run metrics:
-  - latency
-  - session duration
-  - model used
-  - error status
+- Hold-to-record capture behavior.
+- Utterance artifact creation.
+- Device selection basics.
+- Local debug artifacts when enabled.
 
 **Definition of done**
-- Finished sessions produce timestamped final transcript segments in Supabase Postgres.
-- The system no longer depends on browser speech recognition for the real transcript path.
-- Latency and failure data are captured for tuning.
-- The final transcript comes from the post-call full-session pass, not only from provisional chunk-level inference.
+- Each hotkey cycle produces one local utterance artifact ready for transcription.
 
 **What it deliberately does not cover**
-- Final summary generation.
-- Search and history UX polish.
-- System-audio capture.
+- Final app insertion.
+- Cleanup logic.
 
-### Series 5: Processing Status and Transcript UX
+### Series 5: Local Large-v3 Transcription
 
 **Goal**
-- Make the transcript and processing lifecycle understandable in the product.
+- Turn each captured utterance into one accurate final transcript.
 
 **Why it exists**
-- Users need to know what the system is doing while the recording is being uploaded, transcribed, and summarized.
+- This is the core intelligence layer and the main quality driver for the product.
 
 **Depends on**
 - Series 4.
 
 **What gets built**
-- SSE or local event feed from API to client.
-- UI handling for recording, uploading, transcribing, summarizing, completed, and failed states.
-- Optional provisional transcript rendering where helpful, clearly marked as non-authoritative.
-- Final transcript hydration from canonical server data.
+- `faster-whisper + large-v3` invocation for utterances.
+- Model boot and reuse strategy.
+- Local latency/error tracking.
+- Final transcript persistence.
 
 **Definition of done**
-- User can tell whether the system is still recording, transcribing, summarizing, or done.
-- Reconnecting the client reconstructs the latest server truth.
-- The final transcript is clearly presented as the authoritative output.
+- Releasing the hotkey eventually produces one final transcript for the utterance.
+- The system no longer depends on browser speech recognition or session-summary assumptions.
 
 **What it deliberately does not cover**
-- Summary generation.
-- Meeting integrations.
-- Mobile support.
+- Text cleanup.
+- Cursor insertion.
 
-### Series 6: Final Summary and Action Extraction
+### Series 6: Cleanup Modes
 
 **Goal**
-- Generate a clear final summary from actual transcript data after the conversation ends.
+- Convert raw transcripts into text that fits the active writing context.
 
 **Why it exists**
-- A transcript alone is not the final product; users want condensed understanding and follow-up extraction after the call.
+- Raw speech and useful typed text are not the same thing, especially in terminals versus prose editors.
 
 **Depends on**
-- Series 4 and Series 5.
+- Series 5.
 
 **What gets built**
-- Summary worker using `Qwen2.5-7B-Instruct` via a local runtime such as `Ollama`.
-- Final summary generation only after the final transcript is ready.
-- Action item and decision extraction.
-- Summary persistence in Supabase Postgres.
+- `Terminal` mode cleanup rules.
+- `Writing` mode cleanup rules.
+- Filler-word removal policy.
+- Punctuation normalization.
 
 **Definition of done**
-- Final summaries are generated from real transcript data.
-- Action items are stored as structured records, not only free text.
-- Live notes are not required anywhere in the product flow.
+- The app produces clearly different output behavior for terminal dictation versus writing dictation.
 
 **What it deliberately does not cover**
-- Search/retrieval UX.
-- Stronger alternate summary models.
-- Meeting capture expansion.
+- Voice commands.
+- App insertion.
 
-### Series 7: History and Retrieval
+### Series 7: Deterministic Voice Commands
 
 **Goal**
-- Make completed sessions useful after the meeting ends.
+- Support a small, reliable command vocabulary for formatting and prompt construction.
 
 **Why it exists**
-- Durable review is a core product promise and requires a real retrieval experience.
+- Spoken formatting is necessary for practical dictation in terminals and documents.
 
 **Depends on**
-- Series 2, Series 4, Series 5, and Series 6.
+- Series 6.
 
 **What gets built**
-- Session history list backed by Supabase Postgres.
-- Session detail pages showing transcript, summary, and action items.
-- Filters by date, status, and source type.
-- Basic search foundation across sessions and summaries.
+- Parsing for:
+  - `new line`
+  - `slash command`
+  - `open quote`
+  - `code block`
+- Command-to-output transformation rules.
+- Tests for ambiguous utterances and false positives.
 
 **Definition of done**
-- User can reopen a completed session and review everything from Supabase Postgres.
-- No session review flow depends on local filesystem artifacts.
-- History UX works for growing session counts.
+- The command vocabulary produces predictable output and does not depend on fuzzy LLM interpretation.
 
 **What it deliberately does not cover**
-- Semantic/vector retrieval.
-- Team collaboration.
-- Mobile-specific UX.
+- Rich cursor integration with specific apps.
 
-### Series 8: Meeting Capture Expansion
+### Series 8: Universal Insertion Engine
 
 **Goal**
-- Extend beyond plain microphone capture into harder real-world meeting inputs.
+- Insert dictated text into the currently focused input field.
 
 **Why it exists**
-- The product vision includes desktop/browser meeting use cases, but they should not block the core local MVP.
+- This is the core user-facing payoff of the product.
 
 **Depends on**
-- Series 3 through Series 7.
+- Series 3, Series 5, Series 6, and Series 7.
 
 **What gets built**
-- System-audio capture strategy evaluation and first implementation path.
-- Browser meeting capture workflow.
-- Meeting source labeling in session records.
-- Compatibility matrix for supported meeting surfaces.
-- Future Google Meet work remains explicitly separate from MVP-critical flows.
+- Focused app detection.
+- Focused editable element detection.
+- Direct insertion strategy through Accessibility APIs.
+- Fallback strategy for difficult apps.
+- No-auto-submit safety rule.
 
 **Definition of done**
-- At least one non-microphone meeting path is real and documented.
-- Meeting-origin sessions still reuse the same local transcript/summary pipeline.
-- Unsupported meeting flows fail clearly with user-facing guidance.
+- The app can insert dictated text at the current cursor in at least one terminal and one standard text field without pressing Enter.
 
 **What it deliberately does not cover**
-- Full Google Meet bot participation.
-- Multi-platform perfection across all OS/browser combinations.
+- Perfect support for every rich editor.
+- Full app-specific compatibility guarantees.
 
-### Series 9: Production Hardening
+### Series 9: Terminal Hardening
 
 **Goal**
-- Make the local product reliable, observable, and safe to operate.
+- Make the insertion path trustworthy for AI CLI workflows.
 
 **Why it exists**
-- MVP capability is not enough without operational discipline.
+- Terminal usage is the highest-value use case and the riskiest if insertion is sloppy.
 
 **Depends on**
-- Series 1 through Series 8 as needed.
+- Series 8.
 
 **What gets built**
-- Authentication and session ownership controls.
-- Logging, metrics, and alerting.
-- Queue retry policy and dead-letter handling.
-- Failure recovery for audio upload, transcription, and summary jobs.
-- Cost/performance measurement and model tuning.
+- Validation against macOS Terminal.
+- Validation against iTerm2.
+- Validation against common AI CLI flows.
+- Multiline prompt handling.
+- Explicit no-auto-enter protection.
 
 **Definition of done**
-- The system can be monitored and debugged in production.
-- Critical flows have retries and visible failure states.
-- Cost and latency characteristics are measurable.
+- The user can dictate into terminal-based AI tools safely and review before submitting manually.
 
 **What it deliberately does not cover**
-- Native mobile clients.
-- Team collaboration workflows.
+- Executing commands on behalf of the user.
 
-### Series 10: Mobile Readiness
+### Series 10: History and Resend
 
 **Goal**
-- Ensure the backend and product model support future mobile clients cleanly.
+- Make dictated output recoverable and reusable.
 
 **Why it exists**
-- Mobile is a later product expansion, but the architecture should be ready before that work begins.
+- Snippet history is part of the agreed MVP and makes the product practical for repeated prompt writing.
 
 **Depends on**
-- Series 1 through Series 9.
+- Series 5 through Series 9.
 
 **What gets built**
-- Backend contracts that do not assume desktop-only behavior.
-- Session and upload flows that can be reused from mobile.
-- Cross-device session continuity assumptions.
-- Mobile-specific backlog and constraints documentation.
+- SQLite snippet history.
+- History UI.
+- Copy and resend flows.
+- Insert-again flow for recent snippets.
 
 **Definition of done**
-- The backend can support a future mobile client without redesigning the session pipeline.
-- Mobile work can start from existing contracts rather than reopening architecture decisions.
+- The user can recover, copy, and resend recent dictated snippets locally.
 
 **What it deliberately does not cover**
-- Shipping the native mobile app itself.
-- Full mobile UX implementation.
+- Cloud sync.
+- Multi-device history.
+
+### Series 11: Editor Compatibility Expansion
+
+**Goal**
+- Expand beyond terminals and plain text fields into more complex editors.
+
+**Why it exists**
+- The long-term product should work in places like Google Docs, but that should not block the terminal-first MVP.
+
+**Depends on**
+- Series 8 through Series 10.
+
+**What gets built**
+- Browser textarea compatibility matrix.
+- Rich-editor behavior notes.
+- Google Docs strategy evaluation.
+- App-specific fallback handling where justified.
+
+**Definition of done**
+- We have a documented support matrix and at least one browser-based rich editor path that works acceptably.
+
+**What it deliberately does not cover**
+- Perfect support for every editor.
+- Native collaboration features.
 
 ## Immediate GSD Phase Queue
 
-These are the next GSD-sized executable phases for the accuracy-first reset. Each one is intentionally small enough to be planned and executed in focused sessions.
+These are the next GSD-sized executable phases for the dictation pivot. Each phase is intentionally small enough to be planned and executed in focused sessions.
 
-### Phase 4.1: Session Audio Assembly
-- Goal: assemble uploaded chunks into one authoritative session-audio artifact after capture ends.
-- Why now: final-pass ASR quality depends on having one clean source file instead of only chunk-local inference.
-- Definition of done: each completed session has a merged audio artifact that can be resolved from storage for reprocessing.
+### Phase 12.1: macOS Shell Scaffold
+- Goal: create the native menu bar shell and basic runtime wiring for the new product.
+- Why now: the current web shell cannot own global hotkeys or universal insertion.
+- Definition of done: the app launches as a macOS menu bar app with a minimal status surface.
 
-### Phase 4.2: Audio Normalization and VAD
-- Goal: normalize merged audio and apply speech filtering before final ASR.
-- Why now: this is the cheapest path to better transcript quality without changing the product surface.
-- Definition of done: the final ASR pipeline consumes normalized, speech-focused audio and records preprocessing metadata.
+### Phase 12.2: Permission and Hotkey Gate
+- Goal: add microphone permission, Accessibility permission, and one global push-to-talk hotkey.
+- Why now: every later feature depends on trusted OS-level access.
+- Definition of done: the user can hold the hotkey from any app and the shell can verify required permissions.
 
-### Phase 4.3: Authoritative Final ASR Pass
-- Goal: run `faster-whisper` with `large-v3` on the merged session audio and persist the authoritative final transcript.
-- Why now: transcript accuracy is the primary product requirement.
-- Definition of done: the transcript shown to users comes from the post-call final pass, not only from provisional chunk handling.
+### Phase 12.3: Local Utterance Capture
+- Goal: capture one utterance artifact per hotkey cycle.
+- Why now: the new product is utterance-based, not session-based.
+- Definition of done: press-hold-release yields one saved local audio artifact.
+- Test rule: the default self-test path stays pure; any live microphone smoke is opt-in only and must not block normal test runs.
 
-### Phase 5.1: Processing-State UX Simplification
-- Goal: simplify the UI to recording, uploading, transcribing, summarizing, completed, and failed states.
-- Why now: once the transcript becomes post-call authoritative, the product should stop implying live note-taking behavior.
-- Definition of done: the UI clearly communicates pipeline state and, if any provisional transcript remains, it is labeled as non-authoritative.
+### Phase 12.4: Large-v3 Utterance Transcription
+- Goal: run `faster-whisper + large-v3` for one utterance and persist the transcript.
+- Why now: transcript quality is the core product value.
+- Definition of done: one utterance produces one final transcript locally.
 
-### Phase 6.1: Final-Summary-Only Worker Reset
-- Goal: remove live-note requirements from the language pipeline and generate only a final summary plus action items after transcription completes.
-- Why now: this matches the new product scope and reduces complexity in the summary layer.
-- Definition of done: no required product flow depends on `session_notes`; the summary worker runs only after the final transcript is ready.
+### Phase 12.4.1: Apple Silicon Runtime Benchmark
+- Goal: build an `MLX Whisper` bridge for `large-v3`, benchmark it against the current `faster-whisper` CPU path on this Mac, and lock the faster/better local runtime before cleanup and insertion work continues.
+- Why now: Apple Silicon acceleration may materially improve dictation latency, and the correct move is to compare real local performance instead of assuming.
+- Definition of done: the roadmap records one chosen `large-v3` runtime for the macOS app based on measured latency, transcript quality, startup behavior, and operational simplicity on the target machine.
 
-### Phase 9.1: Accuracy Benchmark and Quality Gate
-- Goal: define and run the first repeatable quality benchmark across speakerphone, microphone, and display-audio capture paths.
-- Why now: we need a disciplined way to know whether transcript quality is actually improving.
-- Definition of done: we have a small benchmark set, a review rubric for transcript/summary quality, and a baseline result for future tuning.
+### Phase 12.5: Cleanup Modes
+- Goal: implement `Terminal` and `Writing` output modes.
+- Why now: the same raw transcript should not be inserted the same way everywhere.
+- Definition of done: the app can produce terminal-safe text and cleaned writing text from the same voice input.
+
+### Phase 12.6: Voice Command Parser
+- Goal: add deterministic support for the first four spoken commands.
+- Why now: formatting control is essential for prompts and writing.
+- Definition of done: `new line`, `slash command`, `open quote`, and `code block` work reliably.
+
+### Phase 12.7: Terminal-Safe Insertion
+- Goal: insert dictated text into the focused terminal input without auto-submitting.
+- Why now: this is the most valuable initial target surface.
+- Definition of done: dictated text appears at the cursor in a supported terminal and never presses Enter automatically.
+
+### Phase 12.8: Local History
+- Goal: store and expose snippet history with resend/copy support.
+- Why now: history is part of the agreed MVP and improves trust.
+- Definition of done: recent snippets are queryable locally and can be copied or reinserted.
 
 ## Current Focus
 
-Active line: Planning reset toward an accuracy-first pipeline: full-session final transcription, no live notes, and final-summary-only output.
+Active line: Phase 12.4.1 next: benchmark `MLX Whisper` against the current `faster-whisper` CPU bridge for `large-v3` on this Mac, then lock the runtime before cleanup work continues.
 
 ## Next Up
 
-1. Plan Phase `4.1` for session-audio assembly.
-2. Plan Phase `4.2` for normalization and VAD after the audio-assembly contract is clear.
-3. Plan Phase `4.3` for the authoritative final ASR pass on merged audio.
-4. Plan Phase `6.1` to remove live notes from the required worker flow and generate final summary only.
-5. Plan Phase `9.1` for the first transcript-quality benchmark and acceptance gate.
+1. Plan Phase `12.4.1` for the `MLX Whisper` vs `faster-whisper` local runtime benchmark.
+2. Plan Phase `12.5` for `Terminal` and `Writing` cleanup modes once the runtime is locked.
+3. Plan Phase `12.6` for deterministic voice-command parsing.
+4. Plan Phase `12.7` for terminal-safe focused-input insertion.
+5. Plan Phase `12.8` for local history polish and resend behavior.
 
 ## Blockers / Open Risks
 
-- Speakerphone capture is intrinsically weaker than direct browser/system audio, so input quality remains a hard ceiling on transcription quality.
-- Final transcript quality will depend on session-audio merging, normalization, VAD, and GPU service tuning.
-- System-audio and browser meeting capture remain materially harder than microphone capture and should not be allowed to derail MVP.
-- Browser `getDisplayMedia` audio capture is not universal across OS/browser combinations, so the new Series 8 path must be treated as supported-where-available, not guaranteed everywhere.
-- Summary quality may require prompt iteration or a stronger model if `Qwen2.5-7B-Instruct` underperforms on noisy transcripts.
-- The current repo still contains prototype flows that can confuse future sessions if this roadmap is not treated as the primary source of truth.
+- macOS Accessibility support varies by app, so “works anywhere you can type” should be treated as an aspiration rather than a day-one guarantee.
+- Rich editors such as browser-based document editors may expose weaker insertion hooks than terminals or standard text fields.
+- `large-v3` quality will be strong, but startup latency and warm-model behavior may still need tuning for short utterances.
+- We have not yet benchmarked `MLX Whisper` against the current `faster-whisper` CPU bridge on this exact machine, so runtime choice is not fully locked until Phase `12.4.1` completes.
+- Deterministic voice commands need careful false-positive handling so ordinary speech is not mangled.
+- The repo still contains meeting-summary and session-history assumptions that can confuse future sessions if this roadmap is not treated as the primary source of truth.
 
 ## Decisions Locked
 
 - 2026-03-31: `ROADMAP.md` is the master planning and session continuity document.
-- 2026-03-31: The product is now planned as a local-first rebuild, not as a cloud-first-only architecture.
-- 2026-03-31: The current repo is prototype scaffolding, not proof that the target production backend exists.
-- 2026-03-31: Use Supabase Postgres for structured data and the filesystem for audio/artifacts; do not use JSON archives as product storage.
+- 2026-03-31: The current repo is prototype scaffolding, not proof that the target product backend already exists.
 - 2026-03-31: Use `faster-whisper` as the primary ASR runtime.
 - 2026-03-31: Use `large-v3` as the ASR model for the accuracy-first MVP.
-- 2026-03-31: Use `Qwen2.5-7B-Instruct` as the default summary/action extraction model.
-- 2026-03-31: Use a local LLM runtime as the summary-serving path.
-- 2026-03-31: Use SSE as the default realtime transcript/note delivery path for MVP.
-- 2026-03-31: Defer desktop companion and system-audio capture to later expansion instead of making them MVP-critical.
-- 2026-03-31: Series 1 is complete with local service scaffolds, shared contracts, and a baseline app/runtime split.
-- 2026-04-01: Series 2 is complete with a canonical local schema, filesystem object layout, async API persistence seam, and a database-backed repository path.
-- 2026-04-01: Series 3 is complete with microphone capture, sequential chunk upload, local object storage, and a session stop path.
-- 2026-04-01: Series 4 is complete with a real Python `faster-whisper` worker, local polling, transcript persistence, and model-run latency/error capture.
-- 2026-04-01: Series 5 is complete with transcript/status hydration, SSE session streaming, reconnect-safe transcript fan-out, and explicit processing/finalizing UX in the web app.
-- 2026-04-01: Series 6 is complete with a real summary worker, persisted summary/action items, summary-aware SSE events, and web UI hydration from server truth.
-- 2026-04-01: Series 7 is complete with history list/detail contracts, API-backed review routes, source/status/query filter foundations, and a web history panel that now reads database-backed session state instead of relying on the local archive shape.
-- 2026-04-01: Series 8 first slice is complete with browser display-audio capture for `system-audio` and `meeting-helper` sessions, session metadata that distinguishes capture strategy from meeting routing, and external share-end finalization so the pipeline does not hang in `recording`.
-- 2026-04-04: Accuracy is now prioritized over realtime. The authoritative transcript should come from a post-call final pass on the merged session audio.
-- 2026-04-04: Live notes are removed from the target MVP. The required language output is the final summary only.
-- 2026-04-04: `large-v3` is the only planned ASR model for the authoritative final transcript.
-- 2026-04-04: The summary worker should run after the final transcript completes, not as a rolling live-note system.
-- 2026-04-04: Direct browser/system audio is the preferred quality path; speakerphone remains supported but is expected to be weaker.
+- 2026-04-04: Accuracy is now prioritized over realtime. The authoritative transcript should come from a final local pass rather than weak live text.
+- 2026-04-04: Live notes are removed from the target MVP.
+- 2026-04-04: `large-v3` is the only planned ASR model for the MVP.
+- 2026-04-05: Google Meet and meeting-assistant work are on hold and not part of the active MVP.
+- 2026-04-05: The product is now a macOS universal dictation app rather than a meeting-summary-first app.
+- 2026-04-05: v1 is macOS only.
+- 2026-04-05: v1 uses a menu bar shell.
+- 2026-04-05: v1 is push-to-talk only.
+- 2026-04-05: v1 inserts text at the current cursor and never presses Enter automatically.
+- 2026-04-05: v1 ships with two modes: `Terminal` and `Writing`.
+- 2026-04-05: Voice commands are part of the MVP and must be deterministic.
+- 2026-04-05: Local SQLite is the history store for v1.
+- 2026-04-05: Google Docs is only an example target surface, not the defining integration for MVP.
+- 2026-04-05: Phase 12.1 is complete with a native Swift/SwiftUI menu bar scaffold that runs locally via `swift run`.
+- 2026-04-05: Phase 12.2 is complete with microphone and Accessibility permission state management, Right Option hotkey monitoring, and shell UI/status wiring in the native macOS app.
+- 2026-04-05: Phase 12.3 must keep the always-pass test path pure; any live microphone smoke check is opt-in only and must not be flaky or required.
+- 2026-04-05: Phase 12.3 is complete with one local WAV utterance artifact per hotkey cycle, deterministic Application Support storage, and single-owner hotkey-to-capture coordination in the native app.
+- 2026-04-05: Phase 12.4 is complete with one final local transcript per saved utterance, a bundled Python `faster-whisper + large-v3` bridge, serialized transcription queueing, persisted transcript JSON artifacts, and an opt-in real `large-v3` smoke transcription check.
+- 2026-04-06: `large-v3` remains locked as the model, but the long-term local runtime is now gated on a Phase `12.4.1` benchmark between the current `faster-whisper` CPU path and an `MLX Whisper` Apple Silicon path.
 
 ## Session Restart Notes
 
 - Start every future session by reading this file first, not `STATE.md`.
-- Treat any browser speech recognition path and local JSON archive code as temporary scaffolding unless explicitly noted otherwise here.
-- Series 1 is done; do not reopen service-boundary debates unless a later requirement forces a real architecture change.
-- Series 2 is done; do not fork the schema again or reintroduce duplicate migration baselines.
-- Series 3 is done; do not reopen the microphone upload path unless a bug fix or refinement is required.
-- Series 4 needs a planning reset toward merged-audio, post-call final transcription even though the current worker path exists.
-- Series 5, Series 6, and Series 7 should now be interpreted as transcript/status, final-summary, and history work rather than a commitment to live notes.
-- Series 8 has a real first slice now: browser display-audio capture for `system-audio` and `meeting-helper` exists, but it is constrained by browser/OS support and still needs documentation plus follow-through.
-- When this file is updated in future sessions, keep `Current Focus` to one active line and keep `Decisions Locked` append-only.
+- Treat all Google Meet and meeting-summary work as parked unless this roadmap says otherwise.
+- Reuse the local ASR and worker knowledge from earlier work, but do not let the old web-session product shape dictate the new app architecture.
+- The macOS shell, permission/hotkey gate, utterance-capture path, and local transcription path now exist under `apps/macos`; the next real build step is Phase `12.4.1`, which benchmarks `MLX Whisper` against the current `faster-whisper` CPU bridge before cleanup modes begin.
+- Keep the default self-test runner pure and gate any live smoke behind an explicit environment flag.
+- Keep the terminal-safe rule non-negotiable: no automatic Enter and no automatic execution.
+- Keep `Current Focus` to one active line and keep `Decisions Locked` append-only when updating this file.

@@ -11,6 +11,8 @@
   "scripts": {
     "predev": "npm run build --workspace @voice/shared",
     "dev": "concurrently -k -n web,companion \"npm run dev --workspace @voice/web\" \"npm run dev --workspace @voice/companion\"",
+    "dev:macos": "cd apps/macos && swift run VoiceToTextMac",
+    "test:macos": "cd apps/macos && swift run VoiceToTextMacTestRunner",
     "dev:api": "npm run dev --workspace @voice/api",
     "dev:asr-worker": "npm run dev --workspace @voice/asr-worker",
     "dev:summary-worker": "npm run dev --workspace @voice/summary-worker",
@@ -18,6 +20,7 @@
     "dev:web": "npm run dev --workspace @voice/web",
     "dev:companion": "npm run dev --workspace @voice/companion",
     "prebuild": "npm run build --workspace @voice/shared",
+    "build:macos": "cd apps/macos && swift build",
     "build": "npm run build --workspace @voice/api && npm run build --workspace @voice/asr-worker && npm run build --workspace @voice/summary-worker && npm run build --workspace @voice/companion && npm run build --workspace @voice/web",
     "pretypecheck": "npm run build --workspace @voice/shared",
     "typecheck": "npm run typecheck --workspace @voice/api && npm run typecheck --workspace @voice/asr-worker && npm run typecheck --workspace @voice/summary-worker && npm run typecheck --workspace @voice/companion && npm run typecheck --workspace @voice/web",

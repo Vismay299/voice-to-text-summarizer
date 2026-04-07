@@ -1,0 +1,64 @@
+{
+  "benchmark_results": [
+    {
+      "runtime": "faster-whisper",
+      "model": "large-v3",
+      "device": "cpu",
+      "compute_type": "int8",
+      "load_time_s": 5.551,
+      "transcribe_time_s": 99.554,
+      "total_time_s": 105.105,
+      "audio_duration_s": 13.078,
+      "realtime_factor": 7.613,
+      "text": "Hello, this is a test meeting. We decided to launch the new transcription pipeline next week. This May we'll review the database schema tomorrow, and the next action item is to validate the final summary output after the call.",
+      "segment_count": 5,
+      "avg_confidence": 0.8284,
+      "error": null
+    },
+    {
+      "runtime": "faster-whisper",
+      "model": "large-v3-turbo",
+      "device": "cpu",
+      "compute_type": "int8",
+      "load_time_s": 2.739,
+      "transcribe_time_s": 10.214,
+      "total_time_s": 12.954,
+      "audio_duration_s": 13.078,
+      "realtime_factor": 0.781,
+      "text": "Hello, this is a test meeting. We decided to launch the new transcription pipeline next week. This May will review the database schema tomorrow, and the next action item is to validate the final summary output after the call.",
+      "segment_count": 5,
+      "avg_confidence": 0.8116,
+      "error": null
+    },
+    {
+      "runtime": "mlx-whisper",
+      "model": "large-v3",
+      "device": "gpu",
+      "compute_type": "float16",
+      "load_time_s": 0.0,
+      "transcribe_time_s": 102.075,
+      "total_time_s": 102.075,
+      "audio_duration_s": 13.0,
+      "realtime_factor": 7.852,
+      "text": "Hello, this is a test meeting. We decided to launch the new transcription pipeline next week. Visme will review the database schema tomorrow, and the next action item is to validate the final summary output after the call.",
+      "segment_count": 4,
+      "avg_confidence": 0.8415,
+      "error": null
+    },
+    {
+      "runtime": "mlx-whisper",
+      "model": "large-v3-turbo",
+      "device": "gpu",
+      "compute_type": "float16",
+      "load_time_s": 0.0,
+      "transcribe_time_s": 2.643,
+      "total_time_s": 2.643,
+      "audio_duration_s": 13.0,
+      "realtime_factor": 0.203,
+      "text": "Hello, this is a test meeting. We decided to launch the new transcription pipeline next week. Vismay will review the database schema tomorrow, and the next action item is to validate the final summary output after the call.",
+      "segment_count": 4,
+      "avg_confidence": 0.8409,
+      "error": null
+    }
+  ]
+}
