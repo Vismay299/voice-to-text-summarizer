@@ -140,6 +140,20 @@ public struct SettingsView: View {
                     }
                 }
             }
+
+            Section("History") {
+                Text("\(shellState.sqliteSnippets.count) snippets stored locally.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if shellState.sqliteSnippets.count > 0 {
+                    Button("Clear All History") {
+                        shellState.clearAllSnippets()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
         }
         .formStyle(.grouped)
         .padding(20)

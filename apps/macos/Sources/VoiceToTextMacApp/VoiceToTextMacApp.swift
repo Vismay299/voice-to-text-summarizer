@@ -9,6 +9,7 @@ struct VoiceToTextMacApp: App {
     @StateObject private var captureManager: UtteranceCaptureManager
     @StateObject private var transcriptionService: UtteranceTranscriptionService
     @StateObject private var insertionEngine: TextInsertionEngine
+    private let snippetStore: SnippetStore
 
     private let coordinator: DictationCoordinator
 
@@ -19,6 +20,7 @@ struct VoiceToTextMacApp: App {
         let captureManager = UtteranceCaptureManager()
         let transcriptionService = UtteranceTranscriptionService()
         let insertionEngine = TextInsertionEngine()
+        let snippetStore = SnippetStore()
 
         _shellState = StateObject(wrappedValue: shellState)
         _permissionsManager = StateObject(wrappedValue: permissionsManager)
@@ -26,6 +28,7 @@ struct VoiceToTextMacApp: App {
         _captureManager = StateObject(wrappedValue: captureManager)
         _transcriptionService = StateObject(wrappedValue: transcriptionService)
         _insertionEngine = StateObject(wrappedValue: insertionEngine)
+        self.snippetStore = snippetStore
 
         let coordinator = DictationCoordinator(
             shellState: shellState,
@@ -33,7 +36,8 @@ struct VoiceToTextMacApp: App {
             hotkeyMonitor: hotkeyMonitor,
             captureManager: captureManager,
             transcriptionService: transcriptionService,
-            insertionEngine: insertionEngine
+            insertionEngine: insertionEngine,
+            snippetStore: snippetStore
         )
         self.coordinator = coordinator
 

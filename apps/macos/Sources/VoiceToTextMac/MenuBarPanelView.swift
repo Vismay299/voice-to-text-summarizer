@@ -181,6 +181,14 @@ public struct MenuBarPanelView: View {
 
                 Spacer()
 
+                if shellState.sqliteSnippets.count > 0 {
+                    Text("\(shellState.sqliteSnippets.count) snippets")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
                 Button {
                     NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
                     NSApp.activate(ignoringOtherApps: true)
