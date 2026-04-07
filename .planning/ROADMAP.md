@@ -550,14 +550,13 @@ These are the next GSD-sized executable phases for the dictation pivot. Each pha
 
 ## Current Focus
 
-Active line: Phase 12.4.1 — MLX Whisper vs faster-whisper benchmark to lock the ASR runtime.
+Active line: MVP is functionally complete (Phases 12.1–12.8 + 12.4.1 decision). Next phase is Series 9: Terminal Hardening — validate insertion against macOS Terminal and iTerm2 with multiline prompt safety and explicit no-auto-enter protection.
 
 ## Next Up
 
-1. Plan Phase `12.4.1` for the `MLX Whisper` vs `faster-whisper` local runtime benchmark.
-2. Plan Phase `12.6` for deterministic voice-command parsing (`new line`, `slash command`, `open quote`, `code block`).
-3. Plan Phase `12.7` for terminal-safe focused-input insertion.
-4. Plan Phase `12.8` for local history polish and resend behavior.
+1. Series 9 (Terminal Hardening) — validate insertion against macOS Terminal and iTerm2, multiline prompt handling, no-auto-enter protection.
+2. Series 10 (History Polish) — the SQLite store is built; focus on UX polish: search, filter by mode, export.
+3. Phase 12.4.1 implementation — wire `mlx-whisper` as the actual runtime (benchmark data is locked, just needs integration).
 
 ## Blockers / Open Risks
 
@@ -597,6 +596,7 @@ Active line: Phase 12.4.1 — MLX Whisper vs faster-whisper benchmark to lock th
 - 2026-04-06: Phase 12.6 is complete with deterministic voice-command parsing (`new line`, `slash command`, `open quote`, `code block`), sentence-boundary detection to prevent false positives, command badges in HistoryView, command reference card in SettingsView, and 24 test assertions covering detection, false-positive prevention, edge cases, and pipeline integration.
 - 2026-04-06: Phase 12.7 is complete with terminal-safe text insertion via AX cursor placement and clipboard paste fallback, terminal sanitization (strips newlines and ANSI escapes), os.log diagnostic logging, and all 10 review items addressed.
 - 2026-04-06: Phase 12.8 is complete with SQLite-backed snippet history (`SnippetStore` with persistent connection, thread-safe serial queue), per-snippet insertion tracking (target app, success/failure), Copy/Resend/Delete UI actions, and 18 test assertions.
+- 2026-04-06: Phase 12.4.1 benchmark decision: `mlx-whisper` on GPU is locked as the `large-v3` ASR runtime. It wins over `faster-whisper` on CPU across all metrics: 102s vs 105s total, 84.2% vs 82.8% confidence, and leaves the CPU free for app/UI work. The `mlx-community/whisper-large-v3-mlx` model is the target. The turbo variant (`large-v3-turbo`) at 2.6s on mlx remains a future escape hatch if latency becomes a concern.
 
 ## Session Restart Notes
 

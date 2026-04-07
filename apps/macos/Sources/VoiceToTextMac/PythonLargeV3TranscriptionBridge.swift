@@ -18,8 +18,8 @@ public enum TranscriptionBridgeError: LocalizedError {
             return message
         case .processFailed(let exitCode, let stderr):
             let trimmed = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.contains("No module named 'faster_whisper'") || trimmed.contains("No module named \"faster_whisper\"") {
-                return "Python is available, but the local ASR dependencies are missing. Run `python3 -m pip install -r services/asr-worker/requirements.txt` and relaunch the app."
+            if trimmed.contains("No module named 'mlx_whisper'") || trimmed.contains("No module named \"mlx_whisper\"") {
+                return "Python is available, but MLX Whisper is not installed. Run `python3 -m pip install -r services/asr-worker/requirements.txt` and relaunch the app."
             }
             if trimmed.isEmpty {
                 return "The transcription script exited with code \(exitCode)."
@@ -31,22 +31,17 @@ public enum TranscriptionBridgeError: LocalizedError {
     }
 }
 
+/// Bridge to the bundled Python `mlx-whisper + large-v3` transcription worker.
+/// Runs on Apple Silicon GPU via the MLX framework.
 public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridging, @unchecked Sendable {
     private let pythonExecutable: String
     private let scriptURL: URL
-    private let modelIdentifier = "large-v3"
+    private let modelIdentifier = "mlx-community/whisper-large-v3-mlx"
     private let language = "en"
-    private let device = "cpu"
-    private let computeType = "int8"
-    private let beamSize = 5
-    private let cpuThreads: Int
-    private let numWorkers: Int
 
     public init(
         pythonExecutable: String = "/usr/bin/env",
-        scriptURL: URL? = nil,
-        cpuThreads: Int = max(1, ProcessInfo.processInfo.activeProcessorCount),
-        numWorkers: Int = 1
+        scriptURL: URL? = nil
     ) throws {
         let resolvedScriptURL = scriptURL ?? Bundle.module.url(forResource: "transcribe_utterance", withExtension: "py")
         guard let scriptURL = resolvedScriptURL else {
@@ -55,10 +50,6 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
 
         self.pythonExecutable = pythonExecutable
         self.scriptURL = scriptURL
-        self.cpuThreads = cpuThreads
-        self.numWorkers = numWorkers
-        // Validation moved out of init to avoid blocking the main thread at launch.
-        // The first transcribe() call will surface missing-dependency errors naturally.
     }
 
     public func transcribe(_ artifact: CapturedUtteranceArtifact) async throws -> RawTranscriptionResult {
@@ -74,16 +65,6 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
                 modelIdentifier,
                 "--language",
                 language,
-                "--device",
-                device,
-                "--compute-type",
-                computeType,
-                "--beam-size",
-                "\(beamSize)",
-                "--cpu-threads",
-                "\(cpuThreads)",
-                "--num-workers",
-                "\(numWorkers)",
             ]
         )
 
@@ -140,9 +121,6 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
                 return
             }
 
-            // Read pipes BEFORE waitUntilExit to avoid deadlock when output
-            // exceeds the OS pipe buffer (~64KB). The subprocess blocks on
-            // write if the pipe is full and nobody is reading.
             DispatchQueue.global(qos: .userInitiated).async {
                 let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
                 let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
@@ -158,33 +136,6 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
                     ))
                 }
             }
-        }
-    }
-
-    private static func validatePythonEnvironment(pythonExecutable: String) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: pythonExecutable)
-        process.arguments = ["python3", "-c", "import faster_whisper"]
-        process.environment = ProcessInfo.processInfo.environment.merging(
-            ["PYTHONUNBUFFERED": "1"],
-            uniquingKeysWith: { _, new in new }
-        )
-
-        let stderrPipe = Pipe()
-        process.standardError = stderrPipe
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            throw TranscriptionBridgeError.missingPythonRuntime(
-                "python3 is unavailable. Install Python 3 and the local ASR dependencies before using dictation."
-            )
-        }
-
-        guard process.terminationStatus == 0 else {
-            let stderr = String(decoding: stderrPipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            throw TranscriptionBridgeError.processFailed(exitCode: process.terminationStatus, stderr: stderr)
         }
     }
 }
