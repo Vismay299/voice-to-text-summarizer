@@ -10,9 +10,12 @@ final class DictationCoordinator {
     private let captureManager: UtteranceCaptureManager
     private let transcriptionService: UtteranceTranscriptionService
     private let insertionEngine: TextInsertionEngine
+    private let snippetStore: SnippetStore
 
     private var cancellables: Set<AnyCancellable> = []
     private var bootstrapped = false
+    private var lastTranscription: TranscribedUtterance?
+    private var lastInsertionResult: InsertionResult?
 
     init(
         shellState: ShellState,
@@ -20,7 +23,8 @@ final class DictationCoordinator {
         hotkeyMonitor: HotkeyMonitor,
         captureManager: UtteranceCaptureManager,
         transcriptionService: UtteranceTranscriptionService,
-        insertionEngine: TextInsertionEngine
+        insertionEngine: TextInsertionEngine,
+        snippetStore: SnippetStore
     ) {
         self.shellState = shellState
         self.permissionsManager = permissionsManager
@@ -28,6 +32,7 @@ final class DictationCoordinator {
         self.captureManager = captureManager
         self.transcriptionService = transcriptionService
         self.insertionEngine = insertionEngine
+        self.snippetStore = snippetStore
         bind()
     }
 
@@ -43,7 +48,19 @@ final class DictationCoordinator {
         transcriptionService.bootstrap()
         shellState.refreshTranscriptionState(transcriptionService.transcriptionState)
         shellState.recentTranscribedUtterances = transcriptionService.recentTranscriptions
+
+        // Bootstrap snippet store and load snippets.
+        try? snippetStore.bootstrap()
+        shellState.snippetStore = snippetStore
+        loadSnippets()
+
         syncShellState()
+    }
+
+    private func loadSnippets() {
+        if let snippets = try? snippetStore.loadRecent(limit: 50) {
+            shellState.sqliteSnippets = snippets
+        }
     }
 
     private func bind() {
@@ -112,22 +129,48 @@ final class DictationCoordinator {
         transcriptionService.$transcriptionState
             .sink { [weak self] state in
                 guard let self else { return }
-                if case .transcribed(let transcription) = state,
-                   self.shellState.autoInsertEnabled {
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        let textToInsert = transcription.displayText
-                        if textToInsert.isEmpty { return }
+                if case .transcribed(let transcription) = state {
+                    self.lastTranscription = transcription
+                    if self.shellState.autoInsertEnabled {
+                        Task { @MainActor [weak self] in
+                            guard let self else { return }
+                            let textToInsert = transcription.displayText
+                            if textToInsert.isEmpty { return }
 
-                        self.shellState.refreshInsertionState(.detectingTarget)
-                        let result = await self.insertionEngine.insertText(textToInsert)
-                        self.shellState.refreshInsertionState(
-                            result.success ? .inserted(result) : .failed(result.errorMessage ?? "Insertion failed")
-                        )
+                            self.shellState.refreshInsertionState(.detectingTarget)
+                            let result = await self.insertionEngine.insertText(textToInsert)
+                            self.lastInsertionResult = result
+                            self.shellState.refreshInsertionState(
+                                result.success ? .inserted(result) : .failed(result.errorMessage ?? "Insertion failed")
+                            )
+
+                            // Save to snippet store after insertion.
+                            self.saveSnippet(transcription, insertionResult: result)
+                        }
+                    } else {
+                        // Even without auto-insert, save the snippet.
+                        self.saveSnippet(transcription, insertionResult: nil)
                     }
                 }
             }
             .store(in: &cancellables)
+    }
+
+    private func saveSnippet(_ transcription: TranscribedUtterance, insertionResult: InsertionResult?) {
+        let commands = transcription.detectedCommands.map { $0.rawValue }
+        let record = SnippetRecord(
+            id: transcription.id,
+            rawText: transcription.text,
+            cleanedText: transcription.cleanedText,
+            mode: (transcription.mode ?? .terminal).rawValue,
+            detectedCommands: commands,
+            targetAppName: insertionResult?.targetAppName,
+            insertionSuccess: insertionResult?.success,
+            createdAt: transcription.capturedAt,
+            updatedAt: Date()
+        )
+        try? snippetStore.insert(record)
+        loadSnippets()
     }
 
     private func syncShellState() {

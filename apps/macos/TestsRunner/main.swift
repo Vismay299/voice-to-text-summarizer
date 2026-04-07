@@ -485,6 +485,99 @@ Task { @MainActor in
     let writingCode = cleaner.clean("use a code block like this", mode: .writing)
     expect(writingCode.contains("code block"), "Writing mode should preserve the phrase 'code block': '\(writingCode)'")
 
+    // MARK: - SnippetStore Tests
+
+    let storeTempDir = fileManager.temporaryDirectory
+        .appendingPathComponent("snippet-store-tests", isDirectory: true)
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try! fileManager.createDirectory(at: storeTempDir, withIntermediateDirectories: true)
+
+    let testStore = SnippetStore(baseDirectoryURL: storeTempDir)
+    try! testStore.bootstrap()
+
+    expect(true, "SnippetStore can be instantiated and bootstrapped without crashing")
+
+    let emptySnippets = try! testStore.loadRecent()
+    expect(emptySnippets.isEmpty, "Empty store should return no snippets")
+
+    let emptyCount = try! testStore.count()
+    expect(emptyCount == 0, "Empty store count should be 0, got \(emptyCount)")
+
+    let oneRecord = SnippetRecord(
+        rawText: "hello from the snippet store",
+        cleanedText: "Hello from the snippet store.",
+        mode: "Writing",
+        detectedCommands: []
+    )
+    try! testStore.insert(oneRecord)
+    let loadedOne = try! testStore.loadRecent()
+    expect(loadedOne.count == 1, "Should load 1 snippet, got \(loadedOne.count)")
+    expect(loadedOne.first?.id == oneRecord.id, "Loaded id should match inserted id")
+    expect(loadedOne.first?.rawText == oneRecord.rawText, "Raw text should match")
+    expect(loadedOne.first?.cleanedText == oneRecord.cleanedText, "Cleaned text should match")
+    expect(loadedOne.first?.mode == "Writing", "Mode should be 'Writing'")
+
+    for i in 1...4 {
+        try! testStore.insert(SnippetRecord(
+            rawText: "snippet \(i)",
+            mode: "Terminal",
+            createdAt: Date().addingTimeInterval(Double(i) * 60)
+        ))
+    }
+    let loadedThree = try! testStore.loadRecent(limit: 3)
+    expect(loadedThree.count == 3, "Should load 3 of 5 snippets, got \(loadedThree.count)")
+    expect(loadedThree.first?.rawText == "snippet 4", "Most recent should be snippet 4, got '\(loadedThree.first?.rawText ?? "")'")
+
+    let updatedRecord = SnippetRecord(id: oneRecord.id, rawText: "updated text", mode: "Terminal")
+    try! testStore.insert(updatedRecord)
+    let afterUpsert = try! testStore.loadRecent(limit: 100)
+    let upserted = afterUpsert.first { $0.id == oneRecord.id }
+    expect(upserted?.rawText == "updated text", "Upsert should update raw text: '\(upserted?.rawText ?? "")'")
+    expect(afterUpsert.count == 5, "Upsert should not create duplicate, count: \(afterUpsert.count)")
+
+    let cmdRecord = SnippetRecord(rawText: "new line hello", detectedCommands: ["newLine"])
+    try! testStore.insert(cmdRecord)
+    let allAfterCmd = try! testStore.loadRecent(limit: 100)
+    let cmdLoaded = allAfterCmd.first { $0.rawText == "new line hello" }
+    expect(cmdLoaded?.detectedCommands.contains("newLine") == true, "Commands should round-trip")
+
+    let nullRecord = SnippetRecord(rawText: "no target", targetAppName: nil, insertionSuccess: nil)
+    try! testStore.insert(nullRecord)
+    let allAfterNull = try! testStore.loadRecent(limit: 100)
+    let nullLoaded = allAfterNull.first { $0.rawText == "no target" }
+    expect(nullLoaded?.targetAppName == nil, "Null targetAppName should round-trip")
+    expect(nullLoaded?.insertionSuccess == nil, "Null insertionSuccess should round-trip")
+
+    let preDeleteCount = try! testStore.count()
+    try! testStore.delete(id: oneRecord.id)
+    let postDeleteCount = try! testStore.count()
+    expect(postDeleteCount == preDeleteCount - 1, "Delete should reduce count by 1: \(preDeleteCount) → \(postDeleteCount)")
+
+    try! testStore.delete(id: UUID())
+    expect(true, "Delete non-existent id should not crash")
+
+    let longText = String(repeating: "a", count: 10_000)
+    try! testStore.insert(SnippetRecord(rawText: longText))
+    let allAfterLong = try! testStore.loadRecent(limit: 100)
+    let longLoaded = allAfterLong.first { $0.rawText.count == 10_000 }
+    expect(longLoaded?.rawText.count == 10_000, "Long text should be preserved: \(longLoaded?.rawText.count ?? 0)")
+
+    let unicodeText = "Hello 🌍 世界"
+    try! testStore.insert(SnippetRecord(rawText: unicodeText))
+    let allAfterUni = try! testStore.loadRecent(limit: 100)
+    let unicodeLoaded = allAfterUni.first { $0.rawText == unicodeText }
+    expect(unicodeLoaded?.rawText == unicodeText, "Unicode should be preserved: '\(unicodeLoaded?.rawText ?? "")'")
+
+    let specialText = "hello | grep 'foo' > bar.txt && echo \"done\""
+    try! testStore.insert(SnippetRecord(rawText: specialText))
+    let allAfterSpecial = try! testStore.loadRecent(limit: 100)
+    let specialLoaded = allAfterSpecial.first { $0.rawText == specialText }
+    expect(specialLoaded?.rawText == specialText, "Special characters should be preserved: '\(specialLoaded?.rawText ?? "")'")
+
+    try! testStore.clearAll()
+    let afterClear = try! testStore.count()
+    expect(afterClear == 0, "Clear all should empty the store, got \(afterClear)")
+
     if failures.isEmpty {
         print("VoiceToTextMac test runner passed.")
         exit(0)

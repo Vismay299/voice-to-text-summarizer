@@ -7,10 +7,20 @@ public struct HistoryView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Local History")
-                .font(.title2.weight(.semibold))
+            HStack {
+                Text("Local History")
+                    .font(.title2.weight(.semibold))
+                Spacer()
+                if !shellState.sqliteSnippets.isEmpty {
+                    Button("Clear All") {
+                        shellState.clearAllSnippets()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
 
-            Text("Capture artifacts and transcriptions are stored locally. Snippet history and resend flows will arrive later when insertion lands.")
+            Text("Capture artifacts and transcriptions are stored locally.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -32,8 +42,16 @@ public struct HistoryView: View {
                     }
                 }
 
+                if !shellState.sqliteSnippets.isEmpty {
+                    Section("Snippets") {
+                        ForEach(shellState.sqliteSnippets) { item in
+                            sqliteSnippetRow(item)
+                        }
+                    }
+                }
+
                 if !shellState.snippetHistory.isEmpty {
-                    Section("Snippet history") {
+                    Section("Snippet history (legacy)") {
                         ForEach(shellState.snippetHistory) { item in
                             snippetRow(item)
                         }
@@ -42,6 +60,7 @@ public struct HistoryView: View {
 
                 if shellState.recentTranscribedUtterances.isEmpty
                     && shellState.recentCapturedUtterances.isEmpty
+                    && shellState.sqliteSnippets.isEmpty
                     && shellState.snippetHistory.isEmpty {
                     VStack(spacing: 12) {
                         Image(systemName: "text.bubble")
@@ -169,6 +188,78 @@ public struct HistoryView: View {
 
             Text(item.text)
                 .font(.body)
+        }
+        .padding(.vertical, 4)
+    }
+
+    // MARK: - SQLite Snippet Rows
+
+    private func sqliteSnippetRow(_ item: SnippetRecord) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                modeBadge(DictationMode(rawValue: item.mode) ?? .terminal)
+
+                if item.insertionSuccess == true {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                    if let appName = item.targetAppName {
+                        Text(appName)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if item.insertionSuccess == false {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+
+                Spacer()
+                Text(item.createdAt, style: .time)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(item.preview)
+                .font(.body)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+
+            if !item.detectedCommands.isEmpty {
+                HStack(spacing: 4) {
+                    Text("Commands:")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ForEach(item.detectedCommands.compactMap { VoiceCommand(rawValue: $0) }, id: \.id) { cmd in
+                        commandBadge(cmd)
+                    }
+                }
+            }
+
+            HStack(spacing: 6) {
+                Button("Copy") {
+                    shellState.copySnippet(item.displayText)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button("Resend") {
+                    shellState.copySnippet(item.displayText)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Spacer()
+
+                Button {
+                    shellState.deleteSnippet(id: item.id)
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.red.opacity(0.7))
+            }
         }
         .padding(.vertical, 4)
     }

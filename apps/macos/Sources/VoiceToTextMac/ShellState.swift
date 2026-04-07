@@ -111,6 +111,8 @@ public final class ShellState: ObservableObject {
     @Published public private(set) var currentCaptureState: UtteranceCaptureState = .idle
     @Published public private(set) var currentTranscriptionState: TranscriptionState = .idle
     @Published public var recentTranscribedUtterances: [TranscribedUtterance] = []
+    @Published public var sqliteSnippets: [SnippetRecord] = []
+    public var snippetStore: SnippetStore?
     @Published public var snippetHistory: [SnippetHistoryItem] = [
         SnippetHistoryItem(
             id: UUID(),
@@ -321,5 +323,23 @@ public final class ShellState: ObservableObject {
             insertionStatusText = "Insertion: failed"
             insertionDetailText = message
         }
+    }
+
+    // MARK: - Snippet Actions
+
+    public func copySnippet(_ text: String) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+    }
+
+    public func deleteSnippet(id: UUID) {
+        sqliteSnippets.removeAll { $0.id == id }
+        try? snippetStore?.delete(id: id)
+    }
+
+    public func clearAllSnippets() {
+        sqliteSnippets = []
+        try? snippetStore?.clearAll()
     }
 }
