@@ -82,6 +82,7 @@ public struct MenuBarPanelView: View {
                 shellStepRow(shellState.hotkeyStatusText, icon: "command")
                 shellStepRow(shellState.captureStatusText, icon: "record.circle")
                 shellStepRow(shellState.transcriptionStatusText, icon: "text.bubble")
+                shellStepRow(shellState.insertionStatusText, icon: "arrowshape.turn.up.left")
             }
 
             Text(shellState.captureDetailText)
@@ -93,6 +94,47 @@ public struct MenuBarPanelView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            // Insertion section
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Toggle("Auto-insert", isOn: $shellState.autoInsertEnabled)
+                        .font(.caption)
+                    Spacer()
+                    if shellState.autoInsertEnabled {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    } else {
+                        Image(systemName: "circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Text(shellState.insertionStatusText)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(insertionStatusColor)
+                Text(shellState.insertionDetailText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let lastResult = shellState.recentInsertionResult {
+                    HStack(spacing: 4) {
+                        Image(systemName: lastResult.success ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(lastResult.success ? .green : .red)
+                        Text(lastResult.insertedTextPreview)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Text(lastResult.strategy.rawValue)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
 
             HStack(spacing: 8) {
                 Button("Refresh") {
@@ -156,6 +198,16 @@ public struct MenuBarPanelView: View {
         .frame(width: 360)
     }
 
+    private var insertionStatusColor: Color {
+        switch shellState.currentInsertionState {
+        case .idle: return .secondary
+        case .detectingTarget: return .blue
+        case .inserting: return .orange
+        case .inserted: return .green
+        case .failed: return .red
+        }
+    }
+
     private func shellStepRow(_ title: String, icon: String) -> some View {
         let lowercased = title.lowercased()
 
@@ -173,7 +225,15 @@ public struct MenuBarPanelView: View {
                 Text("Active")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.blue)
-            } else if lowercased.contains("saved") || lowercased.contains("granted") || lowercased.contains("monitoring") {
+            } else if lowercased.contains("detecting") {
+                Text("Detecting")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.blue)
+            } else if lowercased.contains("inserting") && lowercased.contains("active") {
+                Text("Inserting")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.orange)
+            } else if lowercased.contains("success") || lowercased.contains("saved") || lowercased.contains("granted") || lowercased.contains("monitoring") {
                 Text("Ready")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.green)
@@ -181,8 +241,12 @@ public struct MenuBarPanelView: View {
                 Text("Active")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.green)
+            } else if lowercased.contains("failed") {
+                Text("Failed")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.red)
             } else {
-                Text("Needs setup")
+                Text("Idle")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
             }

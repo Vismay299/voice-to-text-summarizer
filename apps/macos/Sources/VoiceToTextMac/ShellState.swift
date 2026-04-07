@@ -82,6 +82,8 @@ public final class ShellState: ObservableObject {
         }
     }
 
+    @Published public var autoInsertEnabled: Bool = true
+
     private let transcriptCleaner = TranscriptCleaner()
     @Published public var shellStatus: ShellStatus = .setupRequired
     @Published public var launchAtLoginEnabled = false
@@ -96,6 +98,10 @@ public final class ShellState: ObservableObject {
     @Published public var captureDetailText = "Hold Right Option to record one utterance once the shell is ready."
     @Published public var transcriptionStatusText = "Transcription: idle"
     @Published public var transcriptionDetailText = "Captured utterances will be transcribed locally with large-v3."
+    @Published public var insertionStatusText = "Insertion: idle"
+    @Published public var insertionDetailText = "Auto-insert is enabled. Dictated text will appear at your cursor without pressing Enter."
+    @Published public var currentInsertionState: InsertionState = .idle
+    @Published public var recentInsertionResult: InsertionResult?
     @Published public var recentCapturedUtterances: [CapturedUtteranceArtifact] = []
     @Published public private(set) var currentCaptureState: UtteranceCaptureState = .idle
     @Published public private(set) var currentTranscriptionState: TranscriptionState = .idle
@@ -268,6 +274,9 @@ public final class ShellState: ObservableObject {
     // MARK: - Snippet Cleaning
 
     /// Rebuild snippet previews using the current dictation mode.
+    /// Snippet
+
+    /// Rebuild snippet previews using the current dictation mode.
     /// Snippets retain their original text but the mode badge reflects the
     /// current active mode for display consistency.
     private func rebuildSnippetPreviews() {
@@ -279,6 +288,35 @@ public final class ShellState: ObservableObject {
                 text: cleanedText.isEmpty ? item.text : cleanedText,
                 createdAt: item.createdAt
             )
+        }
+    }
+
+    // MARK: - Insertion State
+
+    public func refreshInsertionState(_ insertionState: InsertionState) {
+        currentInsertionState = insertionState
+
+        switch insertionState {
+        case .idle:
+            insertionStatusText = "Insertion: idle"
+            insertionDetailText = "Auto-insert is enabled. Dictated text will appear at your cursor without pressing Enter."
+        case .detectingTarget:
+            insertionStatusText = "Insertion: detecting"
+            insertionDetailText = "Detecting the focused application…"
+        case .inserting(let strategy):
+            insertionStatusText = "Insertion: active"
+            insertionDetailText = "Inserting text via \(strategy.rawValue)…"
+        case .inserted(let result):
+            insertionStatusText = "Insertion: success"
+            if let appName = result.targetAppName {
+                insertionDetailText = "Inserted into \(appName) (\(result.strategy.rawValue))."
+            } else {
+                insertionDetailText = "Inserted successfully (\(result.strategy.rawValue))."
+            }
+            recentInsertionResult = result
+        case .failed(let message):
+            insertionStatusText = "Insertion: failed"
+            insertionDetailText = message
         }
     }
 }
