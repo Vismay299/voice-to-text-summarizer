@@ -352,7 +352,16 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
         let markerType = NSPasteboard.PasteboardType("com.voicetotext.insertion-marker")
         pasteboard.setString(UUID().uuidString, forType: markerType)
 
-        // Simulate Cmd+V.
+        // Fix: Activate the target app FIRST, then send Cmd+V.
+        // Otherwise the keystroke goes to the menu bar app instead.
+        if let app = NSRunningApplication.runningApplications(withBundleIdentifier: appBundleId).first {
+            app.activate(options: .activateIgnoringOtherApps)
+        }
+
+        // Wait for the target app to actually gain focus.
+        try? await Task.sleep(nanoseconds: 200_000_000) // 200ms
+
+        // Simulate Cmd+V — now the target app is frontmost so it receives the paste.
         simulateCmdV()
 
         // Safe clipboard restore: only restore if the marker is still present.
@@ -371,10 +380,6 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
                 Self.log.debug("Pasteboard: user copied something new, skipping restore")
             }
             pb.setString("", forType: markerType)
-        }
-
-        if let app = NSRunningApplication.runningApplications(withBundleIdentifier: appBundleId).first {
-            app.activate(options: .activateIgnoringOtherApps)
         }
 
         return InsertionResult(
