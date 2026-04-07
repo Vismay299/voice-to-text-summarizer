@@ -31,13 +31,35 @@ public struct MenuBarPanelView: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Dictation Mode")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                HStack {
+                    Text("Dictation Mode")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    // Active mode indicator pill
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(shellState.selectedMode.badgeColor)
+                            .frame(width: 6, height: 6)
+                        Text(shellState.selectedMode.rawValue)
+                            .font(.caption.weight(.bold))
+                    }
+                    .foregroundStyle(shellState.selectedMode.badgeColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(shellState.selectedMode.badgeColor.opacity(0.12))
+                    .clipShape(Capsule())
+                }
 
                 Picker("Mode", selection: $shellState.selectedMode) {
                     ForEach(DictationMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
+                        HStack {
+                            Image(systemName: mode.iconName)
+                            Text(mode.rawValue)
+                        }
+                        .tag(mode)
                     }
                 }
                 .pickerStyle(.segmented)

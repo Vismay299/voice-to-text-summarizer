@@ -7,14 +7,16 @@ public final class UtteranceTranscriptionService: ObservableObject {
 
     private let bridge: UtteranceTranscriptionBridging
     private let store: TranscribedUtteranceStore
-    private var queuedArtifacts: [CapturedUtteranceArtifact] = []
+    private let cleaner: TranscriptCleaner
+    private var queuedArtifacts: [(artifact: CapturedUtteranceArtifact, mode: DictationMode)] = []
     private var isProcessingQueue = false
     private var activeArtifactID: UUID?
     private var completionWaiters: [UUID: [CheckedContinuation<Void, Never>]] = [:]
 
     public init(
         bridge: UtteranceTranscriptionBridging? = nil,
-        store: TranscribedUtteranceStore = TranscribedUtteranceStore()
+        store: TranscribedUtteranceStore = TranscribedUtteranceStore(),
+        cleaner: TranscriptCleaner = TranscriptCleaner()
     ) {
         if let bridge {
             self.bridge = bridge
@@ -25,6 +27,7 @@ public final class UtteranceTranscriptionService: ObservableObject {
                 )
         }
         self.store = store
+        self.cleaner = cleaner
     }
 
     public func bootstrap() {
@@ -35,17 +38,17 @@ public final class UtteranceTranscriptionService: ObservableObject {
         }
     }
 
-    public func transcribe(_ artifact: CapturedUtteranceArtifact) async {
+    public func transcribe(_ artifact: CapturedUtteranceArtifact, mode: DictationMode) async {
         if recentTranscriptions.contains(where: { $0.id == artifact.id }) {
             return
         }
 
-        if queuedArtifacts.contains(where: { $0.id == artifact.id }) || activeArtifactID == artifact.id {
+        if queuedArtifacts.contains(where: { $0.artifact.id == artifact.id }) || activeArtifactID == artifact.id {
             await waitForCompletion(of: artifact.id)
             return
         }
 
-        queuedArtifacts.append(artifact)
+        queuedArtifacts.append((artifact, mode))
         await withCheckedContinuation { continuation in
             completionWaiters[artifact.id, default: []].append(continuation)
             startQueueIfNeeded()
@@ -74,12 +77,15 @@ public final class UtteranceTranscriptionService: ObservableObject {
         }
 
         while !queuedArtifacts.isEmpty {
-            let nextArtifact = queuedArtifacts.removeFirst()
+            let item = queuedArtifacts.removeFirst()
+            let nextArtifact = item.artifact
+            let mode = item.mode
             activeArtifactID = nextArtifact.id
             transcriptionState = .transcribing(utteranceID: nextArtifact.id)
 
             do {
                 let raw = try await bridge.transcribe(nextArtifact)
+                let cleaned = cleaner.clean(raw.text, mode: mode)
                 let transcriptURL = try store.transcriptURL(for: nextArtifact.id)
                 let transcription = TranscribedUtterance(
                     id: nextArtifact.id,
@@ -91,7 +97,9 @@ public final class UtteranceTranscriptionService: ObservableObject {
                     language: raw.language,
                     durationSeconds: raw.durationSeconds,
                     text: raw.text,
-                    segments: raw.segments
+                    segments: raw.segments,
+                    cleanedText: cleaned.isEmpty ? nil : cleaned,
+                    mode: mode
                 )
                 try store.persist(transcription)
                 recentTranscriptions.removeAll { $0.id == transcription.id }

@@ -194,8 +194,8 @@ Task { @MainActor in
         fileSizeBytes: 4
     )
 
-    async let firstQueueRun: Void = queueService.transcribe(queuedArtifactOne)
-    async let secondQueueRun: Void = queueService.transcribe(queuedArtifactTwo)
+    async let firstQueueRun: Void = queueService.transcribe(queuedArtifactOne, mode: .terminal)
+    async let secondQueueRun: Void = queueService.transcribe(queuedArtifactTwo, mode: .writing)
     _ = await (firstQueueRun, secondQueueRun)
 
     let maxConcurrent = queueBridge.probe.maxActiveCount
@@ -274,7 +274,7 @@ Task { @MainActor in
                 store: transcriptionStore
             )
 
-            await service.transcribe(artifact)
+            await service.transcribe(artifact, mode: .terminal)
             guard case .transcribed(let transcription) = service.transcriptionState else {
                 let detail: String
                 if case .failed(let message) = service.transcriptionState {
@@ -292,6 +292,85 @@ Task { @MainActor in
             failures.append("Smoke transcription failed: \(error.localizedDescription)")
         }
     }
+
+    // MARK: - TranscriptCleaner Tests
+
+    let cleaner = TranscriptCleaner()
+
+    // --- Terminal Mode Tests ---
+
+    // Terminal: basic passthrough should not mangle content
+    let terminalBasic = cleaner.clean("ls -la", mode: .terminal)
+    expect(terminalBasic == "ls -la", "Terminal mode should pass through simple text unchanged: '\(terminalBasic)'")
+
+    // Terminal: leading filler removal
+    let terminalFiller = cleaner.clean("um can you show me the files", mode: .terminal)
+    expect(!terminalFiller.hasPrefix("um "), "Terminal mode should strip leading 'um': '\(terminalFiller)'")
+    expect(terminalFiller.contains("show me the files"), "Terminal mode should keep the rest after leading filler: '\(terminalFiller)'")
+
+    // Terminal: mid-sentence filler preserved (terminal mode is gentle)
+    let terminalMidFiller = cleaner.clean("run the tests um actually", mode: .terminal)
+    expect(terminalMidFiller.contains("um"), "Terminal mode should preserve mid-sentence fillers: '\(terminalMidFiller)'")
+
+    // Terminal: whitespace collapse
+    let terminalWS = cleaner.clean("hello    world", mode: .terminal)
+    expect(terminalWS == "hello world", "Terminal mode should collapse multiple spaces: '\(terminalWS)'")
+
+    // Terminal: multiline input safety
+    let terminalMulti = cleaner.clean("cd project\nls -la\ncat file.txt", mode: .terminal)
+    expect(terminalMulti.contains("\n"), "Terminal mode should preserve newlines: '\(terminalMulti)'")
+
+    // Terminal: special characters preserved
+    let terminalSpecial = cleaner.clean("cat file.txt | grep hello > output.txt", mode: .terminal)
+    expect(terminalSpecial.contains("|"), "Terminal mode should preserve pipe: '\(terminalSpecial)'")
+    expect(terminalSpecial.contains(">"), "Terminal mode should preserve redirect: '\(terminalSpecial)'")
+
+    // --- Writing Mode Tests ---
+
+    // Writing: filler removal throughout
+    let writingFiller = cleaner.clean("so um I think we should", mode: .writing)
+    expect(!writingFiller.lowercased().hasPrefix("so "), "Writing mode should strip leading 'so': '\(writingFiller)'")
+    expect(!writingFiller.lowercased().contains(" um "), "Writing mode should strip mid-sentence 'um': '\(writingFiller)'")
+
+    // Writing: sentence capitalization
+    let writingCaps = cleaner.clean("hello world. goodbye world", mode: .writing)
+    expect(writingCaps.hasPrefix("Hello"), "Writing mode should capitalize first sentence: '\(writingCaps)'")
+
+    // Writing: punctuation normalization
+    let writingPunct = cleaner.clean("Hello , world .", mode: .writing)
+    expect(!writingPunct.contains(" ,"), "Writing mode should remove space before comma: '\(writingPunct)'")
+    expect(!writingPunct.contains(" ."), "Writing mode should remove space before period: '\(writingPunct)'")
+
+    // Writing: multiple leading fillers
+    let writingMultiFiller = cleaner.clean("um uh so like basically hello", mode: .writing)
+    expect(!writingMultiFiller.lowercased().hasPrefix("um"), "Writing mode should strip multiple leading fillers: '\(writingMultiFiller)'")
+
+    // --- Edge Cases ---
+
+    // Empty input
+    let emptyResult = cleaner.clean("", mode: .terminal)
+    expect(emptyResult == "", "Cleaner should return empty string for empty input: '\(emptyResult)'")
+
+    // Whitespace-only input
+    let wsOnly = cleaner.clean("   \n  ", mode: .terminal)
+    expect(wsOnly == "", "Cleaner should return empty string for whitespace-only input: '\(wsOnly)'")
+
+    // Single word
+    let singleWord = cleaner.clean("hello", mode: .terminal)
+    expect(singleWord == "hello", "Cleaner should handle single word: '\(singleWord)'")
+
+    // All filler words
+    let allFillers = cleaner.clean("um uh ah", mode: .writing)
+    expect(allFillers.isEmpty || allFillers.trimmingCharacters(in: .whitespaces).isEmpty, "All-filler input should produce empty or near-empty output: '\(allFillers)'")
+
+    // False positive avoidance: words containing filler substrings
+    let falsePositive = cleaner.clean("the summer actually kind of nice", mode: .writing)
+    expect(falsePositive.contains("summer") || falsePositive.contains("mer"), "Cleaner should not strip substrings that look like fillers inside words: '\(falsePositive)'")
+    expect(!falsePositive.lowercased().contains(" um "), "No false-positive filler removal from 'summer': '\(falsePositive)'")
+
+    // Writing: code block mention should not break backticks
+    let writingCode = cleaner.clean("use a code block like this", mode: .writing)
+    expect(writingCode.contains("code block"), "Writing mode should preserve the phrase 'code block': '\(writingCode)'")
 
     if failures.isEmpty {
         print("VoiceToTextMac test runner passed.")
