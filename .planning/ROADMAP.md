@@ -550,7 +550,7 @@ These are the next GSD-sized executable phases for the dictation pivot. Each pha
 
 ## Current Focus
 
-Active line: Phase 12.7 next: terminal-safe focused-input insertion without auto-submitting.
+Active line: Phase 12.4.1 — MLX Whisper vs faster-whisper benchmark to lock the ASR runtime.
 
 ## Next Up
 
@@ -595,6 +595,8 @@ Active line: Phase 12.7 next: terminal-safe focused-input insertion without auto
 - 2026-04-06: `large-v3` remains locked as the model, but the long-term local runtime is now gated on a Phase `12.4.1` benchmark between the current `faster-whisper` CPU path and an `MLX Whisper` Apple Silicon path.
 - 2026-04-06: Phase 12.5 is complete with `Terminal` and `Writing` cleanup modes wired into the transcription pipeline, persisted per-transcription, selectable in Settings and the menu bar panel, displayed with mode badges in History, and covered by 18 test assertions in the self-test runner.
 - 2026-04-06: Phase 12.6 is complete with deterministic voice-command parsing (`new line`, `slash command`, `open quote`, `code block`), sentence-boundary detection to prevent false positives, command badges in HistoryView, command reference card in SettingsView, and 24 test assertions covering detection, false-positive prevention, edge cases, and pipeline integration.
+- 2026-04-06: Phase 12.7 is complete with terminal-safe text insertion via AX cursor placement and clipboard paste fallback, terminal sanitization (strips newlines and ANSI escapes), os.log diagnostic logging, and all 10 review items addressed.
+- 2026-04-06: Phase 12.8 is complete with SQLite-backed snippet history (`SnippetStore` with persistent connection, thread-safe serial queue), per-snippet insertion tracking (target app, success/failure), Copy/Resend/Delete UI actions, and 18 test assertions.
 
 ## Session Restart Notes
 
