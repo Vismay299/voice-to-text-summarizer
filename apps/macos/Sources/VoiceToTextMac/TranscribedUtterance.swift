@@ -59,6 +59,8 @@ public struct TranscribedUtterance: Codable, Hashable, Identifiable, Sendable {
     public let durationSeconds: TimeInterval
     public let text: String
     public let segments: [TranscribedUtteranceSegment]
+    public let cleanedText: String?
+    public let mode: DictationMode?
 
     public init(
         id: UUID,
@@ -70,7 +72,9 @@ public struct TranscribedUtterance: Codable, Hashable, Identifiable, Sendable {
         language: String,
         durationSeconds: TimeInterval,
         text: String,
-        segments: [TranscribedUtteranceSegment]
+        segments: [TranscribedUtteranceSegment],
+        cleanedText: String? = nil,
+        mode: DictationMode? = nil
     ) {
         self.id = id
         self.capturedAt = capturedAt
@@ -82,10 +86,17 @@ public struct TranscribedUtterance: Codable, Hashable, Identifiable, Sendable {
         self.durationSeconds = durationSeconds
         self.text = text
         self.segments = segments
+        self.cleanedText = cleanedText
+        self.mode = mode
+    }
+
+    /// The display text — cleaned if available, raw as fallback.
+    public var displayText: String {
+        cleanedText ?? text
     }
 
     public var transcriptPreview: String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = displayText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count > 120 else {
             return trimmed
         }

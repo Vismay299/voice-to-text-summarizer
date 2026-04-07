@@ -1,6 +1,8 @@
 import Foundation
 import SwiftUI
 
+private let kSelectedMode = "com.voicetotext.shell.selectedMode"
+
 public struct SnippetHistoryItem: Identifiable, Hashable {
     public let id: UUID
     public let mode: DictationMode
@@ -15,11 +17,29 @@ public struct SnippetHistoryItem: Identifiable, Hashable {
     }
 }
 
-public enum DictationMode: String, CaseIterable, Identifiable {
+public enum DictationMode: String, Codable, CaseIterable, Identifiable, Sendable {
     case terminal = "Terminal"
     case writing = "Writing"
 
     public var id: String { rawValue }
+
+    public var iconName: String {
+        switch self {
+        case .terminal:
+            return "terminal"
+        case .writing:
+            return "pencil"
+        }
+    }
+
+    public var badgeColor: Color {
+        switch self {
+        case .terminal:
+            return .blue
+        case .writing:
+            return .green
+        }
+    }
 
     public var description: String {
         switch self {
@@ -56,7 +76,13 @@ public enum ShellStatus: String {
 
 @MainActor
 public final class ShellState: ObservableObject {
-    @Published public var selectedMode: DictationMode = .terminal
+    @Published public var selectedMode: DictationMode {
+        didSet {
+            UserDefaults.standard.setValue(selectedMode.rawValue, forKey: kSelectedMode)
+        }
+    }
+
+    private let transcriptCleaner = TranscriptCleaner()
     @Published public var shellStatus: ShellStatus = .setupRequired
     @Published public var launchAtLoginEnabled = false
     @Published public var showOverlay = true
@@ -89,7 +115,28 @@ public final class ShellState: ObservableObject {
         ),
     ]
 
-    public init() {}
+    public init() {
+        if let rawValue = UserDefaults.standard.string(forKey: kSelectedMode),
+           let mode = DictationMode(rawValue: rawValue) {
+            self.selectedMode = mode
+        } else {
+            self.selectedMode = .terminal
+        }
+    }
+
+    /// Update the active dictation mode. If `rebuildSnippets` is true,
+    /// the snippet history will be re-cleaned using the new mode.
+    public func updateMode(_ mode: DictationMode, rebuildSnippets: Bool = false) {
+        selectedMode = mode
+        if rebuildSnippets && !snippetHistory.isEmpty {
+            rebuildSnippetPreviews()
+        }
+    }
+
+    /// Return a cleaned preview of the given raw text using the current mode.
+    public func cleanedPreview(for rawText: String) -> String {
+        transcriptCleaner.clean(rawText, mode: selectedMode)
+    }
 
     public var statusSummary: String {
         switch currentTranscriptionState {
@@ -216,5 +263,22 @@ public final class ShellState: ObservableObject {
 
     private func formatBytes(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    // MARK: - Snippet Cleaning
+
+    /// Rebuild snippet previews using the current dictation mode.
+    /// Snippets retain their original text but the mode badge reflects the
+    /// current active mode for display consistency.
+    private func rebuildSnippetPreviews() {
+        snippetHistory = snippetHistory.map { item in
+            let cleanedText = transcriptCleaner.clean(item.text, mode: selectedMode)
+            return SnippetHistoryItem(
+                id: item.id,
+                mode: selectedMode,
+                text: cleanedText.isEmpty ? item.text : cleanedText,
+                createdAt: item.createdAt
+            )
+        }
     }
 }

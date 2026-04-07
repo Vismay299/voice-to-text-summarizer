@@ -550,15 +550,14 @@ These are the next GSD-sized executable phases for the dictation pivot. Each pha
 
 ## Current Focus
 
-Active line: Phase 12.4.1 next: benchmark `MLX Whisper` against the current `faster-whisper` CPU bridge for `large-v3` on this Mac, then lock the runtime before cleanup work continues.
+Active line: Phase 12.6 next: deterministic voice-command parsing (`new line`, `slash command`, `open quote`, `code block`).
 
 ## Next Up
 
 1. Plan Phase `12.4.1` for the `MLX Whisper` vs `faster-whisper` local runtime benchmark.
-2. Plan Phase `12.5` for `Terminal` and `Writing` cleanup modes once the runtime is locked.
-3. Plan Phase `12.6` for deterministic voice-command parsing.
-4. Plan Phase `12.7` for terminal-safe focused-input insertion.
-5. Plan Phase `12.8` for local history polish and resend behavior.
+2. Plan Phase `12.6` for deterministic voice-command parsing (`new line`, `slash command`, `open quote`, `code block`).
+3. Plan Phase `12.7` for terminal-safe focused-input insertion.
+4. Plan Phase `12.8` for local history polish and resend behavior.
 
 ## Blockers / Open Risks
 
@@ -594,13 +593,14 @@ Active line: Phase 12.4.1 next: benchmark `MLX Whisper` against the current `fas
 - 2026-04-05: Phase 12.3 is complete with one local WAV utterance artifact per hotkey cycle, deterministic Application Support storage, and single-owner hotkey-to-capture coordination in the native app.
 - 2026-04-05: Phase 12.4 is complete with one final local transcript per saved utterance, a bundled Python `faster-whisper + large-v3` bridge, serialized transcription queueing, persisted transcript JSON artifacts, and an opt-in real `large-v3` smoke transcription check.
 - 2026-04-06: `large-v3` remains locked as the model, but the long-term local runtime is now gated on a Phase `12.4.1` benchmark between the current `faster-whisper` CPU path and an `MLX Whisper` Apple Silicon path.
+- 2026-04-06: Phase 12.5 is complete with `Terminal` and `Writing` cleanup modes wired into the transcription pipeline, persisted per-transcription, selectable in Settings and the menu bar panel, displayed with mode badges in History, and covered by 18 test assertions in the self-test runner.
 
 ## Session Restart Notes
 
 - Start every future session by reading this file first, not `STATE.md`.
 - Treat all Google Meet and meeting-summary work as parked unless this roadmap says otherwise.
 - Reuse the local ASR and worker knowledge from earlier work, but do not let the old web-session product shape dictate the new app architecture.
-- The macOS shell, permission/hotkey gate, utterance-capture path, and local transcription path now exist under `apps/macos`; the next real build step is Phase `12.4.1`, which benchmarks `MLX Whisper` against the current `faster-whisper` CPU bridge before cleanup modes begin.
+- The macOS shell, permission/hotkey gate, utterance-capture path, local transcription path, and cleanup modes (Terminal + Writing) now exist under `apps/macos 12.5`. The next real build step is Phase `12.6` for deterministic voice commands.
 - Keep the default self-test runner pure and gate any live smoke behind an explicit environment flag.
 - Keep the terminal-safe rule non-negotiable: no automatic Enter and no automatic execution.
 - Keep `Current Focus` to one active line and keep `Decisions Locked` append-only when updating this file.

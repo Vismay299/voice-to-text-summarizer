@@ -84,9 +84,10 @@ final class DictationCoordinator {
                 guard let self else { return }
                 self.shellState.refreshCaptureState(captureState)
                 if case .captured(let artifact) = captureState {
+                    let mode = self.shellState.selectedMode
                     Task { @MainActor [weak self] in
                         guard let self else { return }
-                        await self.transcriptionService.transcribe(artifact)
+                        await self.transcriptionService.transcribe(artifact, mode: mode)
                     }
                 }
             }
