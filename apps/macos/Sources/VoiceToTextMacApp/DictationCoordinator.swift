@@ -9,6 +9,7 @@ final class DictationCoordinator {
     private let hotkeyMonitor: HotkeyMonitor
     private let captureManager: UtteranceCaptureManager
     private let transcriptionService: UtteranceTranscriptionService
+    private let insertionEngine: TextInsertionEngine
 
     private var cancellables: Set<AnyCancellable> = []
     private var bootstrapped = false
@@ -18,13 +19,15 @@ final class DictationCoordinator {
         permissionsManager: PermissionsManager,
         hotkeyMonitor: HotkeyMonitor,
         captureManager: UtteranceCaptureManager,
-        transcriptionService: UtteranceTranscriptionService
+        transcriptionService: UtteranceTranscriptionService,
+        insertionEngine: TextInsertionEngine
     ) {
         self.shellState = shellState
         self.permissionsManager = permissionsManager
         self.hotkeyMonitor = hotkeyMonitor
         self.captureManager = captureManager
         self.transcriptionService = transcriptionService
+        self.insertionEngine = insertionEngine
         bind()
     }
 
@@ -102,6 +105,27 @@ final class DictationCoordinator {
         transcriptionService.$recentTranscriptions
             .sink { [weak self] transcriptions in
                 self?.shellState.recentTranscribedUtterances = transcriptions
+            }
+            .store(in: &cancellables)
+
+        // Auto-insert when transcription completes.
+        transcriptionService.$transcriptionState
+            .sink { [weak self] state in
+                guard let self else { return }
+                if case .transcribed(let transcription) = state,
+                   self.shellState.autoInsertEnabled {
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        let textToInsert = transcription.displayText
+                        if textToInsert.isEmpty { return }
+
+                        self.shellState.refreshInsertionState(.detectingTarget)
+                        let result = await self.insertionEngine.insertText(textToInsert)
+                        self.shellState.refreshInsertionState(
+                            result.success ? .inserted(result) : .failed(result.errorMessage ?? "Insertion failed")
+                        )
+                    }
+                }
             }
             .store(in: &cancellables)
     }
