@@ -33,8 +33,8 @@ public struct TranscriptCleaner: Sendable {
     private func cleanForTerminal(_ text: String) -> String {
         var result = text
 
-        // Collapse multiple spaces into one
-        result = collapseWhitespace(result)
+        // Collapse horizontal whitespace only (spaces/tabs), preserve newlines
+        result = collapseHorizontalWhitespace(result)
 
         // Remove leading filler words only (keep mid-sentence fillers
         // since they may be intentional in a CLI prompt context)
@@ -218,7 +218,17 @@ public struct TranscriptCleaner: Sendable {
 
     // MARK: - Whitespace
 
-    /// Collapse runs of whitespace into a single space.
+    /// Collapse runs of horizontal whitespace (spaces/tabs) into a single space.
+    /// Preserves newlines.
+    private func collapseHorizontalWhitespace(_ text: String) -> String {
+        text.replacingOccurrences(
+            of: "[ \t]+",
+            with: " ",
+            options: .regularExpression
+        )
+    }
+
+    /// Collapse runs of all whitespace (including newlines) into a single space.
     private func collapseWhitespace(_ text: String) -> String {
         text.replacingOccurrences(
             of: "\\s+",
