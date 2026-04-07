@@ -2,6 +2,7 @@ import ApplicationServices
 import AppKit
 import Combine
 import Foundation
+import os.log
 
 // MARK: - InsertionStrategy
 
@@ -71,21 +72,19 @@ public enum InsertionState: Equatable, Sendable {
 /// Inserts dictated text into the currently focused app at the current cursor
 /// position. Never simulates pressing Enter or auto-submits the text.
 ///
-/// Primary strategy: Accessibility-focused text field.
+/// Primary strategy: Accessibility-focused text field at the cursor position.
 /// Fallback: Clipboard paste (Cmd+V simulation) for terminals.
 @MainActor
 public final class TextInsertionEngine: ObservableObject, Sendable {
     @Published public private(set) var state: InsertionState = .idle
 
-    // Bundle IDs that are known to not support AX text field manipulation
-    // and should use the clipboard paste strategy directly.
+    /// Bundle IDs that should skip AX and use clipboard paste directly.
     private static let pasteFirstAppBundleIds: Set<String> = [
         "com.apple.Terminal",
-        "com.apple.iTerm2",
         "com.googlecode.iterm2",
     ]
 
-    private let nonisolatedState = ManagedCriticalState<InsertionState>(.idle)
+    private static let log = Logger(subsystem: "com.voicetotext.shell", category: "insertion")
 
     public init() {}
 
@@ -156,8 +155,8 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
         let pid = app.processIdentifier
         let appElement = AXUIElementCreateApplication(pid)
 
-        // Get the focused UI element.
         guard let focusedElement = copyFocusedElement(from: appElement) else {
+            Self.log.debug("AX: no focused element found")
             return InsertionResult(
                 success: false,
                 strategy: .accessibilityTextField,
@@ -168,8 +167,8 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
             )
         }
 
-        // Check if the focused element supports text entry.
         guard isTextEntryElement(focusedElement) else {
+            Self.log.debug("AX: element is not a text entry element")
             return InsertionResult(
                 success: false,
                 strategy: .accessibilityTextField,
@@ -180,16 +179,17 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
             )
         }
 
-        // Attempt to set the value (insert text).
-        // For text fields, we append to the existing value at the cursor position.
-        let success = setAccessibilityText(focusedElement, text: text)
+        let success = insertTextAtCursor(focusedElement, text: text)
+        if !success {
+            Self.log.debug("AX: failed to insert text at cursor")
+        }
 
         return InsertionResult(
             success: success,
             strategy: .accessibilityTextField,
             targetAppBundleId: bundleId,
             targetAppName: appName,
-            errorMessage: success ? nil : "Failed to set text via Accessibility API.",
+            errorMessage: success ? nil : "Failed to insert text at cursor via Accessibility API.",
             insertedTextPreview: textPreview(text)
         )
     }
@@ -202,31 +202,108 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
             &value
         )
         guard result == .success else { return nil }
-        return value as! AXUIElement?
+        return (value as! AXUIElement)
     }
 
+    /// Check if the element supports text entry by verifying:
+    /// 1. Role is AXTextArea or AXTextField
+    /// 2. AXEditable attribute is true (if available)
     private func isTextEntryElement(_ element: AXUIElement) -> Bool {
-        var value: AnyObject?
-        let result = AXUIElementCopyAttributeValue(
+        var roleValue: AnyObject?
+        let roleResult = AXUIElementCopyAttributeValue(
             element,
             kAXRoleAttribute as CFString,
-            &value
+            &roleValue
         )
-        guard result == .success, let role = value as? String else { return false }
+        guard roleResult == .success, let role = roleValue as? String else { return false }
 
-        // Text areas and text fields are editable.
-        let textRoles = ["AXTextArea", "AXTextField", "AXTextAreaRole", "AXTextFieldRole"]
+        let textRoles = ["AXTextArea", "AXTextField"]
         guard textRoles.contains(role) else { return false }
 
-        // Also check if the element supports the setValue action.
+        // Check AXEditable attribute (string literal since no constant exists).
+        var editableValue: AnyObject?
+        let editableResult = AXUIElementCopyAttributeValue(
+            element,
+            "AXEditable" as CFString,
+            &editableValue
+        )
+        if editableResult == .success, let editable = editableValue as? Bool {
+            return editable
+        }
+
+        // If AXEditable is not available, assume text roles are editable.
         return true
     }
 
-    private func setAccessibilityText(_ element: AXUIElement, text: String) -> Bool {
-        // Try to get the current value, append our text, and set it back.
-        // This preserves existing content and appends at the cursor.
+    /// Insert text at the current cursor position using AXSelectedTextRange.
+    /// This respects the cursor location instead of blindly appending to the end.
+    private func insertTextAtCursor(_ element: AXUIElement, text: String) -> Bool {
+        var rangeValue: AnyObject?
+        let rangeResult = AXUIElementCopyAttributeValue(
+            element,
+            kAXSelectedTextRangeAttribute as CFString,
+            &rangeValue
+        )
 
-        // First, try the "AXValue" or "AXValueAttribute" approach.
+        if rangeResult == .success, let range = rangeValue as! AXValue? {
+            var currentValue: AnyObject?
+            let getResult = AXUIElementCopyAttributeValue(
+                element,
+                kAXValueAttribute as CFString,
+                &currentValue
+            )
+
+            if getResult == .success, let existing = currentValue as? String {
+                var cfRange = CFRange()
+                if AXValueGetValue(range, .cfRange, &cfRange) {
+                    let location = cfRange.location
+                    let length = cfRange.length
+
+                    // Build UTF-16 indices for the splice.
+                    let startUTF16 = existing.utf16.index(existing.utf16.startIndex, offsetBy: location)
+                    let endUTF16 = existing.utf16.index(startUTF16, offsetBy: length)
+
+                    guard let start = String.Index(startUTF16, within: existing),
+                          let end = String.Index(endUTF16, within: existing) else {
+                        return setAccessibilityText(element, text: text)
+                    }
+
+                    let before = existing[..<start]
+                    let after = existing[end...]
+                    let newText = before + text + after
+
+                    let setResult = AXUIElementSetAttributeValue(
+                        element,
+                        kAXValueAttribute as CFString,
+                        String(newText) as CFTypeRef
+                    )
+
+                    if setResult == .success {
+                        let newLocation = location + text.utf16.count
+                        updateCursorPosition(element, to: newLocation)
+                        return true
+                    }
+                }
+            }
+        }
+
+        // Fallback: simple append if we can't get the selection range.
+        Self.log.debug("AX: falling back to simple append (no selection range)")
+        return setAccessibilityText(element, text: text)
+    }
+
+    private func updateCursorPosition(_ element: AXUIElement, to location: Int) {
+        var newRange = CFRange(location: location, length: 0)
+        guard let rangeValue = AXValueCreate(.cfRange, &newRange) else { return }
+        _ = AXUIElementSetAttributeValue(
+            element,
+            kAXSelectedTextRangeAttribute as CFString,
+            rangeValue
+        )
+    }
+
+    /// Fallback: set the entire text value (append mode).
+    private func setAccessibilityText(_ element: AXUIElement, text: String) -> Bool {
         var currentValue: AnyObject?
         let getResult = AXUIElementCopyAttributeValue(
             element,
@@ -259,34 +336,43 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
     ) async -> InsertionResult {
         state = .inserting(strategy: .pasteViaClipboard)
 
-        // Small delay to let the state update propagate before we manipulate
-        // the pasteboard and send events.
         try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
 
-        // Save the current pasteboard contents so we can restore them.
         let pasteboard = NSPasteboard.general
         let oldContents = pasteboard.string(forType: .string)
 
+        // Sanitize text for terminal targets — strip newlines and ANSI escapes.
+        let sanitized = sanitizeForTerminal(text, bundleId: appBundleId)
+
         // Set our text on the pasteboard.
         pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        pasteboard.setString(sanitized, forType: .string)
+
+        // Mark the pasteboard so we can detect if the user copies something else.
+        let markerType = NSPasteboard.PasteboardType("com.voicetotext.insertion-marker")
+        pasteboard.setString(UUID().uuidString, forType: markerType)
 
         // Simulate Cmd+V.
         simulateCmdV()
 
-        // Restore the old pasteboard contents after a short delay.
-        // We do this on the main actor since NSPasteboard is main-thread bound.
+        // Safe clipboard restore: only restore if the marker is still present.
+        let markerBeforeRestore = pasteboard.string(forType: markerType)
         let oldContentsForRestore = oldContents
+
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 200_000_000) // 200ms
-            if let old = oldContentsForRestore {
-                let pb = NSPasteboard.general
-                pb.clearContents()
-                pb.setString(old, forType: .string)
+            try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
+            let pb = NSPasteboard.general
+            if pb.string(forType: markerType) == markerBeforeRestore {
+                if let old = oldContentsForRestore {
+                    pb.clearContents()
+                    pb.setString(old, forType: .string)
+                }
+            } else {
+                Self.log.debug("Pasteboard: user copied something new, skipping restore")
             }
+            pb.setString("", forType: markerType)
         }
 
-        // Bring the target app back to the foreground after pasting.
         if let app = NSRunningApplication.runningApplications(withBundleIdentifier: appBundleId).first {
             app.activate(options: .activateIgnoringOtherApps)
         }
@@ -297,8 +383,47 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
             targetAppBundleId: appBundleId,
             targetAppName: appName,
             errorMessage: nil,
-            insertedTextPreview: textPreview(text)
+            insertedTextPreview: textPreview(sanitized)
         )
+    }
+
+    /// Sanitize text for terminal targets.
+    /// Strips newlines (\n, \r) and ANSI escape sequences to prevent
+    /// accidental command execution when pasting into a terminal.
+    private func sanitizeForTerminal(_ text: String, bundleId: String) -> String {
+        guard Self.pasteFirstAppBundleIds.contains(bundleId) else { return text }
+
+        var result = text
+
+        // Strip ANSI escape sequences.
+        if let ansiRegex = try? NSRegularExpression(
+            pattern: "\\x1B\\[[0-9;]*[a-zA-Z]",
+            options: []
+        ) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = ansiRegex.stringByReplacingMatches(
+                in: result,
+                range: range,
+                withTemplate: ""
+            )
+        }
+
+        // Replace newlines and carriage returns with spaces.
+        result = result.replacingOccurrences(of: "\r\n", with: " ")
+        result = result.replacingOccurrences(of: "\n", with: " ")
+        result = result.replacingOccurrences(of: "\r", with: " ")
+
+        // Collapse multiple spaces.
+        if let spaceRegex = try? NSRegularExpression(pattern: " {2,}", options: []) {
+            let range = NSRange(result.startIndex..., in: result)
+            result = spaceRegex.stringByReplacingMatches(
+                in: result,
+                range: range,
+                withTemplate: " "
+            )
+        }
+
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Simulate a Cmd+V keystroke.
@@ -307,12 +432,10 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
     private func simulateCmdV() {
         let source = CGEventSource(stateID: .hidSystemState)
 
-        // Key down: Cmd+V
         let vKeyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
         vKeyDown?.flags = .maskCommand
         vKeyDown?.post(tap: .cghidEventTap)
 
-        // Key up: Cmd+V
         let vKeyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
         vKeyUp?.flags = .maskCommand
         vKeyUp?.post(tap: .cghidEventTap)
@@ -324,26 +447,5 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count > 80 else { return trimmed }
         return "\(trimmed.prefix(80))…"
-    }
-}
-
-// MARK: - Nonisolated State Helper
-
-/// A thread-safe mutable container for non-Sendable types.
-final class ManagedCriticalState<State: Sendable>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var _state: State
-
-    init(_ initialState: State) {
-        self._state = initialState
-    }
-
-    var state: State {
-        get { lock.withLock { _state } }
-        set { lock.withLock { _state = newValue } }
-    }
-
-    func withLock<R>(_ body: (inout State) -> R) -> R {
-        lock.withLock { body(&self._state) }
     }
 }
