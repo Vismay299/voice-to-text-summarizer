@@ -16,6 +16,135 @@ public enum InsertionStrategy: String, Codable, Sendable, Hashable, CaseIterable
     case notAvailable
 }
 
+// MARK: - KnownAppType
+
+/// Classifies the frontmost app to determine the best insertion strategy.
+/// Series 11: expanded beyond terminals to cover browsers, plain text editors,
+/// and rich editors with app-specific fallback handling.
+public enum KnownAppType: String, Codable, Sendable, Hashable {
+    /// Terminal emulators — use bracketed/plain paste, strip newlines for safety.
+    case terminal
+    /// Web browsers — paste into textareas, handle Shadow DOM limitations.
+    case browser
+    /// Plain text editors (TextEdit, Notes, Xcode) — AX works well.
+    case plainTextEditor
+    /// Rich editors (Google Docs, Notion, VS Code) — AX may be unreliable,
+    /// paste is the safest fallback.
+    case richEditor
+    /// Unknown app — try AX, fall back to paste.
+    case unknown
+
+    /// Classification by bundle ID. This is the primary signal for choosing
+    /// the insertion strategy before AX detection runs.
+    static func classify(bundleId: String) -> KnownAppType {
+        switch bundleId {
+        // Terminals (Series 9)
+        case "com.apple.Terminal",
+             "com.googlecode.iterm2",
+             "com.googlecode.iterm2-beta",
+             "dev.warp.Warp-Stable",
+             "net.kovidgoyal.kitty",
+             "org.alacritty":
+            return .terminal
+
+        // Browsers (Series 11)
+        case "com.google.Chrome",
+             "com.google.Chrome.beta",
+             "com.google.Chrome.dev",
+             "com.google.Chrome.canary",
+             "org.mozilla.firefox",
+             "org.mozilla.firefoxdeveloperedition",
+             "com.apple.Safari",
+             "com.apple.SafariTechnologyPreview",
+             "com.microsoft.edgemac",
+             "com.brave.Browser",
+             "com.mitchellh.ghostty":
+            return .browser
+
+        // Rich editors (Series 11) — AX is unreliable, prefer paste
+        case "com.google.GoogleDrive",              // Google Docs via Drive
+             "com.notion.id",
+             "com.microsoft.VSCode",
+             "com.microsoft.VSCodeInsiders",
+             "com.jetbrains.intellij",
+             "com.jetbrains.pycharm",
+             "com.apple.dt.Xcode":                  // Xcode has AX but paste is safer
+            return .richEditor
+
+        // Plain text editors — AX works well
+        case "com.apple.TextEdit",
+             "com.apple.Notes",
+             "com.sublimetext.4",
+             "com.sublimetext.3",
+             "com.macromates.TextMate.preview",
+             "com.barebones.bbedit",
+             "com.panic.Nova",
+             "com.coteditor.CotEditor":
+            return .plainTextEditor
+
+        default:
+            return .unknown
+        }
+    }
+
+    /// Whether this app type should skip AX and use clipboard paste directly.
+    /// Terminals always use paste (for bracketed paste safety).
+    /// Rich editors prefer paste (AX is unreliable).
+    /// Browsers use paste (AX can't reach Shadow DOM textareas reliably).
+    var prefersPaste: Bool {
+        switch self {
+        case .terminal, .browser, .richEditor:
+            return true
+        case .plainTextEditor, .unknown:
+            return false
+        }
+    }
+
+    /// User-facing support level for this app type.
+    var supportLevel: String {
+        switch self {
+        case .terminal:
+            return "Full — bracketed paste, multiline safe"
+        case .browser:
+            return "Good — clipboard paste into textareas"
+        case .plainTextEditor:
+            return "Full — AX cursor placement + paste fallback"
+        case .richEditor:
+            return "Partial — clipboard paste (AX unreliable)"
+        case .unknown:
+            return "Best effort — AX then paste fallback"
+        }
+    }
+}
+
+// MARK: - TerminalAppMode
+
+/// How a known terminal app handles paste operations.
+/// Terminal Hardening (Phase 12.9): terminals that support bracketed paste
+/// can safely receive multiline text without auto-execution.
+enum TerminalAppMode {
+    /// Supports bracketed paste (\x1b[200~ ... \x1b[201~).
+    case bracketedPaste
+    /// Falls back to plain paste (Cmd+V). Newlines are stripped for safety.
+    case plainPaste
+
+    /// Known terminal bundle IDs and their paste mode.
+    static func mode(for bundleId: String) -> TerminalAppMode? {
+        switch bundleId {
+        case "com.googlecode.iterm2",
+             "com.googlecode.iterm2-beta",
+             "dev.warp.Warp-Stable",
+             "net.kovidgoyal.kitty":
+            return .bracketedPaste
+        case "com.apple.Terminal",
+             "org.alacritty":
+            return .plainPaste
+        default:
+            return nil
+        }
+    }
+}
+
 // MARK: - InsertionResult
 
 /// The outcome of a single insertion attempt.
@@ -78,13 +207,19 @@ public enum InsertionState: Equatable, Sendable {
 public final class TextInsertionEngine: ObservableObject, Sendable {
     @Published public private(set) var state: InsertionState = .idle
 
-    /// Bundle IDs that should skip AX and use clipboard paste directly.
-    private static let pasteFirstAppBundleIds: Set<String> = [
-        "com.apple.Terminal",
-        "com.googlecode.iterm2",
-    ]
+    /// Callback invoked when insertion fails after all retries.
+    /// Set by the coordinator to surface errors to the user.
+    public var onInsertionFailure: ((String) -> Void)?
 
     private static let log = Logger(subsystem: "com.voicetotext.shell", category: "insertion")
+
+    /// ANSI escape sequence markers for bracketed paste.
+    private static let bracketedPasteStart = "\u{001B}[200~"
+    private static let bracketedPasteEnd = "\u{001B}[201~"
+
+    private static let focusDelayNanoseconds: UInt64 = 50_000_000
+    private static let appActivationDelayNanoseconds: UInt64 = 200_000_000
+    private static let pasteRestoreDelayNanoseconds: UInt64 = 500_000_000
 
     public init() {}
 
@@ -126,20 +261,31 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
 
         let bundleId = app.bundleIdentifier ?? ""
         let appName = app.localizedName ?? bundleId
+        let appType = KnownAppType.classify(bundleId: bundleId)
 
-        // Terminals and known paste-first apps skip AX text field detection.
-        if Self.pasteFirstAppBundleIds.contains(bundleId) {
-            return await insertViaPaste(text, appBundleId: bundleId, appName: appName)
+        // Known app types that prefer paste over AX:
+        // - Terminals: bracketed/plain paste for safety (Series 9)
+        // - Browsers: AX can't reach Shadow DOM textareas (Series 11)
+        // - Rich editors: AX is unreliable (Series 11)
+        if appType.prefersPaste {
+            return await insertViaPaste(text, appBundleId: bundleId, appName: appName, appType: appType)
         }
 
-        // Try AX text field first.
+        // Try AX text field first for plain text editors and unknown apps.
         let axResult = await insertViaAccessibility(text, app: app, bundleId: bundleId, appName: appName)
         if axResult.success {
             return axResult
         }
 
         // Fall back to clipboard paste.
-        return await insertViaPaste(text, appBundleId: bundleId, appName: appName)
+        let pasteResult = await insertViaPaste(text, appBundleId: bundleId, appName: appName, appType: appType)
+
+        // Surface failure if both AX and paste fail.
+        if !pasteResult.success {
+            onInsertionFailure?(pasteResult.errorMessage ?? "Unknown insertion error")
+        }
+
+        return pasteResult
     }
 
     // MARK: - Accessibility Insertion
@@ -327,39 +473,44 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
         return setResult == .success
     }
 
-    // MARK: - Clipboard Paste (Fallback)
+    // MARK: - Clipboard Paste (Fallback for terminals, browsers, and rich editors)
 
     private func insertViaPaste(
         _ text: String,
         appBundleId: String,
-        appName: String
+        appName: String,
+        appType: KnownAppType
     ) async -> InsertionResult {
         state = .inserting(strategy: .pasteViaClipboard)
 
-        try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        try? await Task.sleep(nanoseconds: Self.focusDelayNanoseconds)
 
         let pasteboard = NSPasteboard.general
         let oldContents = pasteboard.string(forType: .string)
 
-        // Sanitize text for terminal targets — strip newlines and ANSI escapes.
-        let sanitized = sanitizeForTerminal(text, bundleId: appBundleId)
+        // Sanitize text based on app type.
+        let sanitized = sanitizeForInsertion(text, appType: appType, bundleId: appBundleId)
 
-        // Set our text on the pasteboard.
+        // Build the final pasteboard content ONCE, before activation.
+        let finalContent: String
+        if appType == .terminal && terminalMode(bundleId: appBundleId) == .bracketedPaste {
+            finalContent = Self.bracketedPasteStart + sanitized + Self.bracketedPasteEnd
+        } else {
+            finalContent = sanitized
+        }
+
         pasteboard.clearContents()
-        pasteboard.setString(sanitized, forType: .string)
+        pasteboard.setString(finalContent, forType: .string)
 
-        // Mark the pasteboard so we can detect if the user copies something else.
         let markerType = NSPasteboard.PasteboardType("com.voicetotext.insertion-marker")
         pasteboard.setString(UUID().uuidString, forType: markerType)
 
-        // Fix: Activate the target app FIRST, then send Cmd+V.
-        // Otherwise the keystroke goes to the menu bar app instead.
+        // Activate the target app FIRST, then send Cmd+V.
         if let app = NSRunningApplication.runningApplications(withBundleIdentifier: appBundleId).first {
             app.activate(options: .activateIgnoringOtherApps)
         }
 
-        // Wait for the target app to actually gain focus.
-        try? await Task.sleep(nanoseconds: 200_000_000) // 200ms
+        try? await Task.sleep(nanoseconds: Self.appActivationDelayNanoseconds)
 
         // Simulate Cmd+V — now the target app is frontmost so it receives the paste.
         simulateCmdV()
@@ -369,7 +520,7 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
         let oldContentsForRestore = oldContents
 
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
+            try? await Task.sleep(nanoseconds: Self.pasteRestoreDelayNanoseconds)
             let pb = NSPasteboard.general
             if pb.string(forType: markerType) == markerBeforeRestore {
                 if let old = oldContentsForRestore {
@@ -392,43 +543,66 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
         )
     }
 
-    /// Sanitize text for terminal targets.
-    /// Strips newlines (\n, \r) and ANSI escape sequences to prevent
-    /// accidental command execution when pasting into a terminal.
-    private func sanitizeForTerminal(_ text: String, bundleId: String) -> String {
-        guard Self.pasteFirstAppBundleIds.contains(bundleId) else { return text }
+    // MARK: - Text Sanitization
 
+    /// Sanitize dictated text before pasting into the target app.
+    /// Series 11: handles terminals, browsers, and rich editors with
+    /// app-appropriate rules.
+    private func sanitizeForInsertion(_ text: String, appType: KnownAppType, bundleId: String) -> String {
+        switch appType {
+        case .terminal:
+            return sanitizeForTerminal(text, bundleId: bundleId)
+        case .browser, .richEditor, .plainTextEditor, .unknown:
+            // No sanitization needed — these app types handle pasted text safely.
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+    }
+
+    /// Return the terminal paste mode for a given bundle ID.
+    private func terminalMode(bundleId: String) -> TerminalAppMode? {
+        TerminalAppMode.mode(for: bundleId)
+    }
+
+    /// Sanitize text for terminal targets.
+    /// Phase 12.9 — multiline-aware sanitization:
+    ///
+    /// - **Bracketed paste mode** (iTerm2, Warp, Kitty): newlines are preserved.
+    /// - **Plain paste mode** (Terminal.app, Alacritty): newlines replaced with spaces.
+    @_spi(Testing) public func sanitizeForTerminal(_ text: String, bundleId: String) -> String {
+        let mode = TerminalAppMode.mode(for: bundleId)
+        guard mode != nil else { return text }
+        return sanitizeForTerminal(text, mode: mode)
+    }
+
+    private func sanitizeForTerminal(_ text: String, mode: TerminalAppMode?) -> String {
         var result = text
 
-        // Strip ANSI escape sequences.
+        // Always strip ANSI escape sequences (CSI + OSC).
         if let ansiRegex = try? NSRegularExpression(
-            pattern: "\\x1B\\[[0-9;]*[a-zA-Z]",
-            options: []
+            pattern: "\\x1B\\[[0-9;]*[a-zA-Z]|\\x1B\\].*?(?:\\x07|\\x1B\\\\)",
+            options: [.dotMatchesLineSeparators]
         ) {
             let range = NSRange(result.startIndex..., in: result)
             result = ansiRegex.stringByReplacingMatches(
-                in: result,
-                range: range,
-                withTemplate: ""
+                in: result, range: range, withTemplate: ""
             )
         }
 
-        // Replace newlines and carriage returns with spaces.
-        result = result.replacingOccurrences(of: "\r\n", with: " ")
-        result = result.replacingOccurrences(of: "\n", with: " ")
-        result = result.replacingOccurrences(of: "\r", with: " ")
-
-        // Collapse multiple spaces.
-        if let spaceRegex = try? NSRegularExpression(pattern: " {2,}", options: []) {
-            let range = NSRange(result.startIndex..., in: result)
-            result = spaceRegex.stringByReplacingMatches(
-                in: result,
-                range: range,
-                withTemplate: " "
-            )
+        switch mode {
+        case .bracketedPaste:
+            return result.trimmingCharacters(in: .whitespacesAndNewlines)
+        case .plainPaste, .none:
+            result = result.replacingOccurrences(of: "\r\n", with: " ")
+            result = result.replacingOccurrences(of: "\n", with: " ")
+            result = result.replacingOccurrences(of: "\r", with: " ")
+            if let spaceRegex = try? NSRegularExpression(pattern: " {2,}", options: []) {
+                let range = NSRange(result.startIndex..., in: result)
+                result = spaceRegex.stringByReplacingMatches(
+                    in: result, range: range, withTemplate: " "
+                )
+            }
+            return result.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-
-        return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Simulate a Cmd+V keystroke.

@@ -485,6 +485,44 @@ Task { @MainActor in
     let writingCode = cleaner.clean("use a code block like this", mode: .writing)
     expect(writingCode.contains("code block"), "Writing mode should preserve the phrase 'code block': '\(writingCode)'")
 
+    // MARK: - Series 11: Editor Compatibility Tests (KnownAppType)
+
+    // Terminal classification
+    expect(KnownAppType.classify(bundleId: "com.apple.Terminal") == .terminal, "Terminal.app should be classified as terminal")
+    expect(KnownAppType.classify(bundleId: "com.googlecode.iterm2") == .terminal, "iTerm2 should be classified as terminal")
+    expect(KnownAppType.classify(bundleId: "dev.warp.Warp-Stable") == .terminal, "Warp should be classified as terminal")
+    expect(KnownAppType.classify(bundleId: "net.kovidgoyal.kitty") == .terminal, "Kitty should be classified as terminal")
+
+    // Browser classification
+    expect(KnownAppType.classify(bundleId: "com.google.Chrome") == .browser, "Chrome should be classified as browser")
+    expect(KnownAppType.classify(bundleId: "org.mozilla.firefox") == .browser, "Firefox should be classified as browser")
+    expect(KnownAppType.classify(bundleId: "com.apple.Safari") == .browser, "Safari should be classified as browser")
+    expect(KnownAppType.classify(bundleId: "com.microsoft.edgemac") == .browser, "Edge should be classified as browser")
+
+    // Rich editor classification
+    expect(KnownAppType.classify(bundleId: "com.notion.id") == .richEditor, "Notion should be classified as richEditor")
+    expect(KnownAppType.classify(bundleId: "com.microsoft.VSCode") == .richEditor, "VS Code should be classified as richEditor")
+
+    // Plain text editor classification
+    expect(KnownAppType.classify(bundleId: "com.apple.TextEdit") == .plainTextEditor, "TextEdit should be classified as plainTextEditor")
+    expect(KnownAppType.classify(bundleId: "com.apple.Notes") == .plainTextEditor, "Notes should be classified as plainTextEditor")
+    expect(KnownAppType.classify(bundleId: "com.sublimetext.4") == .plainTextEditor, "Sublime Text should be classified as plainTextEditor")
+
+    // Unknown classification
+    expect(KnownAppType.classify(bundleId: "com.unknown.App") == .unknown, "Unknown app should be classified as unknown")
+
+    // prefersPaste
+    expect(KnownAppType.terminal.prefersPaste, "Terminals should prefer paste")
+    expect(KnownAppType.browser.prefersPaste, "Browsers should prefer paste")
+    expect(KnownAppType.richEditor.prefersPaste, "Rich editors should prefer paste")
+    expect(!KnownAppType.plainTextEditor.prefersPaste, "Plain text editors should not prefer paste")
+    expect(!KnownAppType.unknown.prefersPaste, "Unknown apps should not prefer paste (try AX first)")
+
+    // Support level
+    expect(!KnownAppType.terminal.supportLevel.isEmpty, "Terminal should have support level")
+    expect(!KnownAppType.browser.supportLevel.isEmpty, "Browser should have support level")
+    expect(!KnownAppType.plainTextEditor.supportLevel.isEmpty, "Plain text editor should have support level")
+
     // MARK: - SnippetStore Tests
 
     let storeTempDir = fileManager.temporaryDirectory
