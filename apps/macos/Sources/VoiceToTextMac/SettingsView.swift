@@ -13,12 +13,31 @@ public struct SettingsView: View {
                 Toggle("Show floating status overlay", isOn: $shellState.showOverlay)
                 Toggle("Launch at login", isOn: $shellState.launchAtLoginEnabled)
                     .disabled(true)
+            }
 
-                Picker("Default mode", selection: $shellState.selectedMode) {
+            Section("Dictation Mode") {
+                Picker("Mode", selection: $shellState.selectedMode) {
                     ForEach(DictationMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
+                        HStack {
+                            Image(systemName: mode.iconName)
+                            Text(mode.rawValue)
+                        }
+                        .tag(mode)
                     }
                 }
+                .pickerStyle(.segmented)
+
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(shellState.selectedMode.badgeColor)
+                        .frame(width: 8, height: 8)
+
+                    Text(shellState.selectedMode.description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, 4)
             }
 
             Section("Permissions and Hotkey") {
