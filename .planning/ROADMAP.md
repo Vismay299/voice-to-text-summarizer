@@ -550,13 +550,12 @@ These are the next GSD-sized executable phases for the dictation pivot. Each pha
 
 ## Current Focus
 
-Active line: MVP is functionally complete (Phases 12.1–12.8 + 12.4.1 decision). Next phase is Series 9: Terminal Hardening — validate insertion against macOS Terminal and iTerm2 with multiline prompt safety and explicit no-auto-enter protection.
+Active line: Series 11 (Editor Compatibility) is complete. The MVP core (Phases 12.1–12.9 + 12.4.1, Series 10, Series 11) is fully implemented. Next priority is Series 12: Polish & Stability.
 
 ## Next Up
 
-1. Series 9 (Terminal Hardening) — validate insertion against macOS Terminal and iTerm2, multiline prompt handling, no-auto-enter protection.
-2. Series 10 (History Polish) — the SQLite store is built; focus on UX polish: search, filter by mode, export.
-3. Phase 12.4.1 implementation — wire `mlx-whisper` as the actual runtime (benchmark data is locked, just needs integration).
+1. Series 12 (Polish & Stability) — first-launch onboarding, launch-at-login, error UX improvements, remaining review items.
+2. Real-world validation — manual smoke testing across all supported app types (terminals, browsers, text editors, rich editors).
 
 ## Blockers / Open Risks
 
