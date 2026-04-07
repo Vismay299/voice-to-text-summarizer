@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 
 private let kSelectedMode = "com.voicetotext.shell.selectedMode"
+private let kAutoInsertEnabled = "com.voicetotext.shell.autoInsertEnabled"
 
 public struct SnippetHistoryItem: Identifiable, Hashable {
     public let id: UUID
@@ -82,7 +83,11 @@ public final class ShellState: ObservableObject {
         }
     }
 
-    @Published public var autoInsertEnabled: Bool = true
+    @Published public var autoInsertEnabled: Bool {
+        didSet {
+            UserDefaults.standard.setValue(autoInsertEnabled, forKey: kAutoInsertEnabled)
+        }
+    }
 
     private let transcriptCleaner = TranscriptCleaner()
     @Published public var shellStatus: ShellStatus = .setupRequired
@@ -128,6 +133,7 @@ public final class ShellState: ObservableObject {
         } else {
             self.selectedMode = .terminal
         }
+        self.autoInsertEnabled = UserDefaults.standard.object(forKey: kAutoInsertEnabled) as? Bool ?? true
     }
 
     /// Update the active dictation mode. If `rebuildSnippets` is true,
@@ -272,9 +278,6 @@ public final class ShellState: ObservableObject {
     }
 
     // MARK: - Snippet Cleaning
-
-    /// Rebuild snippet previews using the current dictation mode.
-    /// Snippet
 
     /// Rebuild snippet previews using the current dictation mode.
     /// Snippets retain their original text but the mode badge reflects the
