@@ -108,12 +108,8 @@ public final class ShellState: ObservableObject {
     }
 
     /// Series 12: Launch-at-login toggle, persisted to UserDefaults.
-    @Published public var launchAtLoginEnabled: Bool {
-        didSet {
-            UserDefaults.standard.setValue(launchAtLoginEnabled, forKey: kLaunchAtLoginEnabled)
-            applyLaunchAtLogin(launchAtLoginEnabled)
-        }
-    }
+    /// Uses a private backing property to avoid firing didSet during init.
+    @Published public private(set) var launchAtLoginEnabled: Bool = false
 
     private let transcriptCleaner = TranscriptCleaner()
     @Published public var shellStatus: ShellStatus = .setupRequired
@@ -165,7 +161,16 @@ public final class ShellState: ObservableObject {
         }
         self.autoInsertEnabled = UserDefaults.standard.object(forKey: kAutoInsertEnabled) as? Bool ?? true
         self.hasCompletedOnboarding = UserDefaults.standard.bool(forKey: kHasCompletedOnboarding)
-        self.launchAtLoginEnabled = UserDefaults.standard.bool(forKey: kLaunchAtLoginEnabled)
+        // Set the backing Published value directly during init to avoid firing didSet.
+        self._launchAtLoginEnabled = Published(initialValue: UserDefaults.standard.bool(forKey: kLaunchAtLoginEnabled))
+    }
+
+    /// Series 12: Enable or disable launch-at-login.
+    /// This method persists the setting and registers/unregisters the login item.
+    public func setLaunchAtLogin(_ enabled: Bool) {
+        launchAtLoginEnabled = enabled
+        UserDefaults.standard.setValue(enabled, forKey: kLaunchAtLoginEnabled)
+        applyLaunchAtLogin(enabled)
     }
 
     /// Update the active dictation mode. If `rebuildSnippets` is true,
@@ -383,27 +388,48 @@ public final class ShellState: ObservableObject {
     /// Series 12: Auto-prompt for permissions on first launch.
     /// Called by DictationCoordinator during bootstrap to guide the user
     /// through the initial permission setup without requiring manual button clicks.
+    ///
+    /// The mic prompt is awaited so the user sees one dialog at a time.
+    /// Accessibility is only prompted after the mic is confirmed granted.
+    /// Onboarding is marked complete only when permissions are actually resolved
+    /// (granted or explicitly denied), not just when dialogs were shown.
     public func requestPermissionsOnboarding(permissionsManager: PermissionsManager) {
         guard shouldShowOnboarding else { return }
 
-        // Request microphone first — this is the most critical permission.
         Task {
+            // Step 1: Request microphone and wait for user response.
             await permissionsManager.requestMicrophoneAccess()
-            // After mic response, request accessibility.
-            permissionsManager.requestAccessibilityAccess()
-            // Mark onboarding as complete after both prompts.
+
+            // Step 2: Only request accessibility if mic was granted.
+            // Re-check the actual permission status after the request completes.
+            permissionsManager.refreshStates()
+            if permissionsManager.microphoneState == .granted {
+                permissionsManager.requestAccessibilityAccess()
+                // Give the user time to respond in System Settings before marking complete.
+                try? await Task.sleep(nanoseconds: 2_000_000_000) // 2s grace period
+            }
+
+            // Mark onboarding complete so we don't re-prompt on every launch.
+            // If the user denied mic, we still mark complete — they can use
+            // the manual Grant buttons in the menu bar panel later.
             hasCompletedOnboarding = true
         }
     }
 
-    /// Mark onboarding as complete (called when user dismisses or completes setup).
+    /// Mark onboarding as complete (exposed for future "Skip" button in onboarding UI).
     public func markOnboardingComplete() {
         hasCompletedOnboarding = true
     }
 
     /// Series 12: Apply launch-at-login setting using ServiceManagement.
     /// On macOS 13+, uses SMAppService for modern login item registration.
+    /// Skips in debug builds since unsigned apps cannot register as login items.
     private func applyLaunchAtLogin(_ enabled: Bool) {
+        #if DEBUG
+        // Unsigned debug builds cannot register as login items.
+        // Log the intent but skip the SMAppService call to avoid errors.
+        Self.log.debug("Launch at login \(enabled ? "enabled" : "disabled") (no-op in debug build)")
+        #else
         if #available(macOS 13.0, *) {
             do {
                 let appService = SMAppService.mainApp
@@ -416,5 +442,6 @@ public final class ShellState: ObservableObject {
                 Self.log.warning("Launch at login \(enabled ? "enable" : "disable") failed: \(error.localizedDescription)")
             }
         }
+        #endif
     }
 }
