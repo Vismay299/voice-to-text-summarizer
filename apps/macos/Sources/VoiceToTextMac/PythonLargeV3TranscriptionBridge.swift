@@ -60,12 +60,14 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
     private static let log = Logger(subsystem: "com.voicetotext.shell", category: "transcription-bridge")
 
     /// The persistent worker process.
-    private let lock = NSLock()
-    private var workerProcess: Process?
-    private var workerStdin: FileHandle?
-    private var workerStdout: FileHandle?
-    private var workerStderr: Pipe?
-    private var isReady = false
+    /// Series 13 Review Fix: Replace NSLock with a serial dispatch queue
+    /// because Swift 6 forbids NSLock.lock() from async contexts.
+    private let stateQueue = DispatchQueue(label: "com.voicetotext.worker-state", qos: .userInitiated)
+    private nonisolated(unsafe) var workerProcess: Process?
+    private nonisolated(unsafe) var workerStdin: FileHandle?
+    private nonisolated(unsafe) var workerStdout: FileHandle?
+    private nonisolated(unsafe) var workerStderr: Pipe?
+    private nonisolated(unsafe) var isReady = false
 
     public init(
         pythonExecutable: String = "/usr/bin/env",
@@ -97,12 +99,9 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
     /// Start the persistent Python worker and wait for model warmup.
     /// Call this once at app startup (e.g., from DictationCoordinator).
     public func startWorker() async throws {
-        lock.lock()
-        guard workerProcess == nil else {
-            lock.unlock()
-            return
-        }
-        lock.unlock()
+        var alreadyRunning: Bool = false
+        stateQueue.sync { alreadyRunning = workerProcess != nil }
+        guard !alreadyRunning else { return }
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: pythonExecutable)
@@ -130,12 +129,12 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
             throw TranscriptionBridgeError.processFailed(exitCode: -1, stderr: error.localizedDescription)
         }
 
-        lock.lock()
-        workerProcess = process
-        workerStdin = stdinPipe.fileHandleForWriting
-        workerStdout = stdoutPipe.fileHandleForReading
-        workerStderr = stderrPipe
-        lock.unlock()
+        stateQueue.sync {
+            workerProcess = process
+            workerStdin = stdinPipe.fileHandleForWriting
+            workerStdout = stdoutPipe.fileHandleForReading
+            workerStderr = stderrPipe
+        }
 
         Self.log.info("Worker process started (pid \(process.processIdentifier)). Waiting for model warmup...")
 
@@ -155,9 +154,7 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
         let warmupMs = readyJSON["warmup_ms"] as? Int ?? 0
         Self.log.info("Worker ready (model warmup: \(warmupMs)ms)")
 
-        lock.lock()
-        isReady = true
-        lock.unlock()
+        stateQueue.sync { isReady = true }
     }
 
     /// Stop the persistent worker. Safe to call multiple times.
@@ -166,15 +163,17 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
     }
 
     private func stopWorkerSync() {
-        lock.lock()
-        let process = workerProcess
-        let stdin = workerStdin
-        workerProcess = nil
-        workerStdin = nil
-        workerStdout = nil
-        workerStderr = nil
-        isReady = false
-        lock.unlock()
+        var process: Process?
+        var stdin: FileHandle?
+        stateQueue.sync {
+            process = workerProcess
+            stdin = workerStdin
+            workerProcess = nil
+            workerStdin = nil
+            workerStdout = nil
+            workerStderr = nil
+            isReady = false
+        }
 
         // Close stdin to signal EOF → worker exits cleanly.
         stdin?.closeFile()
@@ -186,9 +185,9 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
 
     /// Whether the worker is running and ready for requests.
     public var workerIsReady: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return isReady && workerProcess?.isRunning == true
+        var ready = false
+        stateQueue.sync { ready = isReady && workerProcess?.isRunning == true }
+        return ready
     }
 
     // MARK: - Transcription
@@ -216,14 +215,13 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
         }
         requestLine += "\n"
 
-        // Send request to worker stdin (hold lock to prevent interleaved writes).
-        lock.lock()
-        let stdin = workerStdin
+        // Send request to worker stdin (synchronized to prevent interleaved writes).
+        var stdin: FileHandle?
+        stateQueue.sync { stdin = workerStdin }
         let lineData = requestLine.data(using: .utf8)
         if let stdin, let lineData {
             stdin.write(lineData)
         }
-        lock.unlock()
 
         guard stdin != nil, lineData != nil else {
             throw TranscriptionBridgeError.workerCrashed("Worker stdin unavailable")
@@ -266,9 +264,8 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
                     return
                 }
 
-                self.lock.lock()
-                let stdout = self.workerStdout
-                self.lock.unlock()
+                var stdout: FileHandle?
+                self.stateQueue.sync { stdout = self.workerStdout }
 
                 guard let stdout else {
                     continuation.resume(throwing: TranscriptionBridgeError.workerCrashed("stdout unavailable"))
@@ -284,12 +281,12 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
                     if byte.isEmpty {
                         // EOF — worker exited. Mark as not ready so subsequent
                         // calls to transcribe() will attempt a restart.
-                        self.lock.lock()
-                        self.isReady = false
-                        self.workerProcess = nil
-                        self.workerStdin = nil
-                        self.workerStdout = nil
-                        self.lock.unlock()
+                        self.stateQueue.sync {
+                            self.isReady = false
+                            self.workerProcess = nil
+                            self.workerStdin = nil
+                            self.workerStdout = nil
+                        }
 
                         let stderr = self.collectStderr()
                         continuation.resume(throwing: TranscriptionBridgeError.workerCrashed(
@@ -317,10 +314,8 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
 
     /// Collect any available stderr output for diagnostics.
     private func collectStderr() -> String {
-        lock.lock()
-        let pipe = workerStderr
-        lock.unlock()
-
+        var pipe: Pipe?
+        stateQueue.sync { pipe = workerStderr }
         guard let pipe else { return "" }
         let data = pipe.fileHandleForReading.availableData
         return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
