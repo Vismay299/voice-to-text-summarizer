@@ -112,5 +112,6 @@ public enum TranscriptionState: Equatable {
     case idle
     case transcribing(utteranceID: UUID)
     case transcribed(TranscribedUtterance)
+    case partial(partialText: String)
     case failed(String)
 }

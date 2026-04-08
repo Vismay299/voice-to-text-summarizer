@@ -617,16 +617,21 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
     /// Simulate a Cmd+V keystroke.
     /// SAFETY: This method only sends the V key with the Command modifier.
     /// It does NOT send Enter, Return, or any other key.
+    ///
+    /// Uses `.cgSessionEventTap` (not `.cghidEventTap`) so that the simulated
+    /// keystroke is posted into the window server's session event stream. The HID
+    /// tap goes stale after macOS sleep/wake and silently drops events; the session
+    /// tap is always live as long as Accessibility permission is granted.
     private func simulateCmdV() {
         let source = CGEventSource(stateID: .hidSystemState)
 
         let vKeyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
         vKeyDown?.flags = .maskCommand
-        vKeyDown?.post(tap: .cghidEventTap)
+        vKeyDown?.post(tap: .cgSessionEventTap)
 
         let vKeyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
         vKeyUp?.flags = .maskCommand
-        vKeyUp?.post(tap: .cghidEventTap)
+        vKeyUp?.post(tap: .cgSessionEventTap)
     }
 
     // MARK: - Helpers

@@ -104,6 +104,13 @@ public final class UtteranceCaptureManager: ObservableObject {
         resetRecorderState()
     }
 
+    public func currentRecordingURL() throws -> URL {
+        guard let url = activeRecordingURL else {
+            throw NSError(domain: "com.voicetotext.capture", code: 1, userInfo: [NSLocalizedDescriptionKey: "No active recording."])
+        }
+        return url
+    }
+
     private func resetRecorderState() {
         recorder = nil
         activeUtteranceID = nil

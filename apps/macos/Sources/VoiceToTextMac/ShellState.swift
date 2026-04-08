@@ -127,6 +127,8 @@ public final class ShellState: ObservableObject {
     @Published public var insertionStatusText = "Insertion: idle"
     @Published public var insertionDetailText = "Auto-insert is enabled. Dictated text will appear at your cursor without pressing Enter."
     @Published public var currentInsertionState: InsertionState = .idle
+    /// Series 13: Live partial text shown while the user is still speaking.
+    @Published public var currentPartialText: String = ""
     @Published public var recentInsertionResult: InsertionResult?
     @Published public var recentCapturedUtterances: [CapturedUtteranceArtifact] = []
     @Published public private(set) var currentCaptureState: UtteranceCaptureState = .idle
@@ -193,6 +195,9 @@ public final class ShellState: ObservableObject {
             return "Transcribing utterance \(utteranceID.uuidString.prefix(8)) with large-v3."
         case .transcribed(let transcription):
             return "Transcript saved locally. \(transcription.segments.count) segments ready."
+        case .partial(let text):
+            let preview = text.prefix(60)
+            return "Partial: \(preview)…"
         case .failed(let message):
             return message
         case .idle:
@@ -285,6 +290,9 @@ public final class ShellState: ObservableObject {
             if recentTranscribedUtterances.count > 12 {
                 recentTranscribedUtterances = Array(recentTranscribedUtterances.prefix(12))
             }
+        case .partial(let text):
+            transcriptionStatusText = "Transcription: partial"
+            transcriptionDetailText = "Live: \(text.prefix(40))…"
         case .failed(let message):
             transcriptionStatusText = "Transcription: failed"
             transcriptionDetailText = message

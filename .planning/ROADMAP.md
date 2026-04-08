@@ -558,14 +558,19 @@ These are the next GSD-sized executable phases for the dictation pivot. Each pha
   3. **Reduce insertion delays** — profile and lower the 500ms clipboard-restore delay to ~150–200ms; skip the 200ms app-activation delay when the target app is already frontmost.
   4. **Parallel transcription queue** (stretch) — allow concurrent GPU inference in `UtteranceTranscriptionService` so back-to-back utterances don't wait serially.
 
+### Series 13: Latency Optimization & Live Partial Transcription
+- Goal: reduce transcription latency and show text live while the user is still speaking.
+- Why now: the 2-second model warmup + per-utterance process spawn was noticeable; users want to see text appear as they speak.
+- Definition of done: persistent Python worker with preloaded model, 2-second partial transcription timer during recording, live text display in the menu bar panel.
+
 ## Current Focus
 
-Active line: Series 13 (Latency Optimization) is complete. The full MVP (Phases 12.1–12.9 + 12.4.1, Series 10–13) is implemented. Next step is real-world validation across all supported app types.
+Active line: Series 13 (Latency Optimization + Live Partial Transcription) is complete. The full MVP with streaming text display is implemented. Next step is Series 14: Polish & Stability — first-launch onboarding, launch-at-login, and remaining review items.
 
 ## Next Up
 
-1. Real-world validation — manual smoke testing across terminals, browsers, text editors, and rich editors.
-2. Series 14 (optional) — address issues found during live testing, expand editor support matrix.
+1. Series 14 (Polish & Stability) — first-launch onboarding flow, launch-at-login toggle, error UX improvements, remaining review items.
+2. Real-world validation — manual smoke testing across all supported app types (terminals, browsers, text editors, rich editors).
 
 ## Blockers / Open Risks
 
