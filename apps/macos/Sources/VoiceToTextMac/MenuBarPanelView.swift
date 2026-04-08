@@ -95,6 +95,31 @@ public struct MenuBarPanelView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            // Series 13: Live partial text while speaking
+            if !shellState.currentPartialText.isEmpty {
+                Divider()
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Image(systemName: "waveform")
+                            .font(.caption)
+                            .foregroundStyle(.blue)
+                        Text("Listening...")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.blue)
+                        Spacer()
+                    }
+                    Text(shellState.currentPartialText)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(6)
+                        .background(Color.blue.opacity(0.05))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+                .transition(.opacity)
+                .animation(.easeInOut, value: shellState.currentPartialText)
+            }
+
             // Insertion section
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
@@ -229,6 +254,10 @@ public struct MenuBarPanelView: View {
                 Text("Recording")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.red)
+            } else if lowercased.contains("partial") {
+                Text("Partial")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.blue)
             } else if lowercased.contains("transcribing") {
                 Text("Active")
                     .font(.caption.weight(.semibold))
