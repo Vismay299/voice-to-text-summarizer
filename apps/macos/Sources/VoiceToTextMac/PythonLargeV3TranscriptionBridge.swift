@@ -63,6 +63,7 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
     /// Series 13 Review Fix: Replace NSLock with a serial dispatch queue
     /// because Swift 6 forbids NSLock.lock() from async contexts.
     private let stateQueue = DispatchQueue(label: "com.voicetotext.worker-state", qos: .userInitiated)
+    private let requestGate = WorkerRequestGate()
     private nonisolated(unsafe) var workerProcess: Process?
     private nonisolated(unsafe) var workerStdin: FileHandle?
     private nonisolated(unsafe) var workerStdout: FileHandle?
@@ -193,6 +194,13 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
     // MARK: - Transcription
 
     public func transcribe(_ artifact: CapturedUtteranceArtifact) async throws -> RawTranscriptionResult {
+        await requestGate.acquire()
+        defer {
+            Task {
+                await requestGate.release()
+            }
+        }
+
         // If the worker isn't ready, try to start it on demand.
         if !workerIsReady {
             Self.log.warning("Worker not ready, starting on demand...")
@@ -353,6 +361,32 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
 
     deinit {
         stopWorkerSync()
+    }
+}
+
+private actor WorkerRequestGate {
+    private var isHeld = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        guard isHeld else {
+            isHeld = true
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func release() {
+        guard !waiters.isEmpty else {
+            isHeld = false
+            return
+        }
+
+        let next = waiters.removeFirst()
+        next.resume()
     }
 }
 

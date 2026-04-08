@@ -127,8 +127,6 @@ public final class ShellState: ObservableObject {
     @Published public var insertionStatusText = "Insertion: idle"
     @Published public var insertionDetailText = "Auto-insert is enabled. Dictated text will appear at your cursor without pressing Enter."
     @Published public var currentInsertionState: InsertionState = .idle
-    /// Series 13: Live partial text shown while the user is still speaking.
-    @Published public var currentPartialText: String = ""
     @Published public var recentInsertionResult: InsertionResult?
     @Published public var recentCapturedUtterances: [CapturedUtteranceArtifact] = []
     @Published public private(set) var currentCaptureState: UtteranceCaptureState = .idle

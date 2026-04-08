@@ -16,7 +16,7 @@ Native macOS shell scaffold for the local dictation app.
 
 This package does not yet implement:
 
-- focused-app text insertion
+- reliable live terminal streaming while the user is still speaking
 
 The always-pass self-test runner checks pure helpers, queueing behavior, and local transcript persistence. Live smoke checks stay opt-in and must never block the default test path.
 

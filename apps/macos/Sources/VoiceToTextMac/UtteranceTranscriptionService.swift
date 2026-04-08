@@ -75,18 +75,23 @@ public final class UtteranceTranscriptionService: ObservableObject {
 
     /// Series 13: Transcribe the currently-recording WAV file for partial, live text display.
     /// Does not persist the result — it's purely for real-time UI feedback while the hotkey is held.
-    public func transcribePartial(_ artifact: CapturedUtteranceArtifact, mode: DictationMode) async {
+    public func transcribePartial(_ artifact: CapturedUtteranceArtifact, mode: DictationMode) async -> String? {
         do {
             let raw = try await bridge.transcribe(artifact)
-            let cleaned = cleaner.clean(raw.text, mode: mode)
-            let commandResult = commandParser.parse(cleaned)
-            let displayText = commandResult.cleanedText.isEmpty ? raw.text : commandResult.cleanedText
+            // Live partial insertion must stay close to the raw transcript.
+            // Applying cleaner/command transforms on unstable partials makes
+            // the CLI look random because those transforms can change as the
+            // model revises earlier words. Reserve cleanup and command parsing
+            // for the final transcript only.
+            let displayText = raw.text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !displayText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 transcriptionState = .partial(partialText: displayText)
+                return displayText
             }
         } catch {
             // Partial transcription failures are silent — the final transcription will still run.
         }
+        return nil
     }
 
     private func startQueueIfNeeded() {
