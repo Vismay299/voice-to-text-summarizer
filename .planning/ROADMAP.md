@@ -218,10 +218,9 @@ Non-goals for the new MVP:
 8. The raw transcript is passed through the cleanup layer according to active mode.
 9. The voice command layer converts supported spoken commands into formatting/output tokens.
 10. The insertion engine detects the focused app and attempts direct cursor insertion.
-11. In terminal mode, the app can append live partial text into the focused CLI while the hotkey is still held.
-12. On hotkey release, the app inserts only the remaining final suffix and never presses Enter.
-13. The utterance, transcript, insertion result, and final snippet are stored in local SQLite.
-14. The user can reopen recent snippet history, copy text, or resend it.
+11. On hotkey release, the app inserts the final text and never presses Enter.
+12. The utterance, transcript, insertion result, and final snippet are stored in local SQLite.
+13. The user can reopen recent snippet history, copy text, or resend it.
 
 ## Execution Series
 
@@ -559,14 +558,14 @@ These are the next GSD-sized executable phases for the dictation pivot. Each pha
   3. **Reduce insertion delays** — profile and lower the 500ms clipboard-restore delay to ~150–200ms; skip the 200ms app-activation delay when the target app is already frontmost.
   4. **Parallel transcription queue** (stretch) — allow concurrent GPU inference in `UtteranceTranscriptionService` so back-to-back utterances don't wait serially.
 
-### Series 13: Latency Optimization & Live CLI Insertion
-- Goal: reduce transcription latency and make terminal dictation feel live in the active CLI, not just inside the menu bar shell.
-- Why now: the 2-second model warmup + per-utterance process spawn was noticeable; users want dictated text to appear where they are actually working while they are still speaking.
-- Definition of done: persistent Python worker with preloaded model, 2-second partial transcription timer during recording, and live terminal insertion that can replace the current dictated CLI fragment as partial transcripts improve.
+### Series 13: Latency Optimization
+- Goal: reduce transcription latency without changing the stable final-only insertion model.
+- Why now: the 2-second model warmup + per-utterance process spawn was noticeable; the biggest remaining UX gap was final transcript latency.
+- Definition of done: persistent Python worker with preloaded model, worker concurrency safety, and lower insertion overhead while preserving final-only insertion on release.
 
 ## Current Focus
 
-Active line: Series 13 is being corrected from menu-bar-only partial preview toward terminal-first live insertion. The shell may remain a menu bar app, but the live user-facing output must appear in the focused CLI. Next step after this correction remains Series 14: Polish & Stability.
+Active line: Series 13 latency optimization is complete with the worker race fix retained and final-only insertion preserved. Next step remains Series 14: Polish & Stability.
 
 ## Next Up
 
@@ -614,7 +613,7 @@ Active line: Series 13 is being corrected from menu-bar-only partial preview tow
 - 2026-04-06: Phase 12.4.1 benchmark decision: `mlx-whisper` on GPU is locked as the `large-v3` ASR runtime. It wins over `faster-whisper` on CPU across all metrics: 102s vs 105s total, 84.2% vs 82.8% confidence, and leaves the CPU free for app/UI work. The `mlx-community/whisper-large-v3-mlx` model is the target. The turbo variant (`large-v3-turbo`) at 2.6s on mlx remains a future escape hatch if latency becomes a concern.
 - 2026-04-06: ASR runtime switched to `mlx-community/whisper-large-v3-turbo`. Turbo is 2.6s vs 102s for full large-v3 (~40x faster) with essentially identical confidence (84.1% vs 84.2%). The original accuracy-first decision for `large-v3` is overridden because turbo delivers the same accuracy at a usable latency.
 - 2026-04-07: Series 13 latency optimization: persistent Python worker replaces per-utterance process spawn, model preloads at app startup via warmup transcription, insertion delays reduced (focus 50→10ms, clipboard restore 500→200ms), skip-activation-if-frontmost shortcut added.
-- 2026-04-08: Series 13 product correction: live partial transcription shown only in the menu bar is not sufficient for the terminal-first product. The active direction is live insertion into the focused CLI during recording, including controlled replacement of the current dictated fragment as partial transcripts improve, with the menu bar treated as shell chrome rather than the primary output surface.
+- 2026-04-08: Experimental live CLI insertion was evaluated on a separate branch and not adopted into the stable merge target. The merge candidate keeps the worker race fix and final-only insertion behavior because the live path remained too unstable for terminal prompts.
 
 ## Session Restart Notes
 

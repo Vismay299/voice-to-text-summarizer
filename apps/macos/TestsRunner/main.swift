@@ -202,30 +202,6 @@ Task { @MainActor in
     expect(maxConcurrent == 1, "Transcription service should serialize utterances instead of running bridge calls concurrently.")
     expect(queueService.recentTranscriptions.count == 2, "Transcription service should keep both queued transcription results.")
 
-    let firstLivePlan = LiveCLIInsertionPlanner.plan(
-        previousCommittedText: "",
-        previousObservedTranscript: nil,
-        nextObservedTranscript: "hello"
-    )
-    expect(firstLivePlan == .noChange(committedText: ""), "First live terminal observation should not commit unstable text yet.")
-
-    let secondLivePlan = LiveCLIInsertionPlanner.plan(
-        previousCommittedText: "",
-        previousObservedTranscript: "hello world",
-        nextObservedTranscript: "hello world again"
-    )
-    expect(
-        secondLivePlan == .insert(textToAppend: "hello ", committedText: "hello "),
-        "Stable shared prefix should be appended only through the last confirmed word boundary."
-    )
-
-    let noChangeLivePlan = LiveCLIInsertionPlanner.plan(
-        previousCommittedText: "hello ",
-        previousObservedTranscript: "hello world again",
-        nextObservedTranscript: "hello there"
-    )
-    expect(noChangeLivePlan == .noChange(committedText: "hello "), "Revisions before the committed prefix should not rewrite the terminal text.")
-
     if envFlag("VOICE_TO_TEXT_MACOS_SMOKE_CAPTURE") {
         if AVCaptureDevice.authorizationStatus(for: .audio) != .authorized {
             fputs("SKIP: live capture smoke requested, but microphone permission is not granted for this executable.\n", stderr)

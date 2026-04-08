@@ -19,14 +19,6 @@ final class DictationCoordinator {
     private var lastTranscription: TranscribedUtterance?
     private var lastInsertionResult: InsertionResult?
 
-    /// Series 13: Timer for partial, real-time transcription during recording.
-    /// Fires every 2 seconds to transcribe the growing WAV file and show text live.
-    private var partialTranscriptionTimer: Timer?
-    private var currentRecordingUtteranceID: UUID?
-    private var currentRecordingMode: DictationMode?
-    private var liveCLICommittedText = ""
-    private var lastObservedPartialTranscript: String?
-
     init(
         shellState: ShellState,
         permissionsManager: PermissionsManager,
@@ -138,23 +130,12 @@ final class DictationCoordinator {
             .sink { [weak self] captureState in
                 guard let self else { return }
                 self.shellState.refreshCaptureState(captureState)
-                if case .recording(let utteranceID) = captureState {
-                    // Series 13: Start partial transcription timer when recording begins.
-                    self.currentRecordingUtteranceID = utteranceID
-                    self.currentRecordingMode = self.shellState.selectedMode
-                    self.liveCLICommittedText = ""
-                    self.lastObservedPartialTranscript = nil
-                    self.startPartialTranscriptionTimer()
-                } else if case .captured(let artifact) = captureState {
-                    // Stop the partial timer — final transcription will run shortly.
-                    self.stopPartialTranscriptionTimer()
+                if case .captured(let artifact) = captureState {
                     let mode = self.shellState.selectedMode
                     Task { @MainActor [weak self] in
                         guard let self else { return }
                         await self.transcriptionService.transcribe(artifact, mode: mode)
                     }
-                } else {
-                    self.stopPartialTranscriptionTimer()
                 }
             }
             .store(in: &cancellables)
@@ -189,8 +170,6 @@ final class DictationCoordinator {
                             self.shellState.refreshInsertionState(
                                 result.success ? .inserted(result) : .failed(result.errorMessage ?? "Insertion failed")
                             )
-                            self.liveCLICommittedText = ""
-                            self.lastObservedPartialTranscript = nil
 
                             // Save to snippet store after insertion.
                             self.saveSnippet(transcription, insertionResult: result)
@@ -257,72 +236,6 @@ final class DictationCoordinator {
             await captureManager.stopCapture()
         }
     }
-
-    // MARK: - Series 13: Partial Transcription Timer
-
-    /// Starts a timer that transcribes the growing WAV file every 2 seconds while recording.
-    /// Shows partial text live in the UI so the user sees speech appearing as they speak.
-    private func startPartialTranscriptionTimer() {
-        partialTranscriptionTimer?.invalidate()
-        partialTranscriptionTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            Task { @MainActor [weak self] in
-                guard let self,
-                      let utteranceID = self.currentRecordingUtteranceID,
-                      let mode = self.currentRecordingMode else { return }
-                // Get the current recording file path from the capture manager's state.
-                if case .recording = self.captureManager.captureState {
-                    // Build a temporary artifact pointing to the in-progress WAV file.
-                    let artifact = CapturedUtteranceArtifact(
-                        id: utteranceID,
-                        fileURL: try! self.captureManager.currentRecordingURL(),
-                        createdAt: Date(),
-                        durationSeconds: 0,
-                        fileSizeBytes: 0
-                    )
-                    if let partialText = await self.transcriptionService.transcribePartial(artifact, mode: mode) {
-                        await self.applyLiveCLIInsertion(partialText, mode: mode)
-                    }
-                }
-            }
-        }
-    }
-
-    private func stopPartialTranscriptionTimer() {
-        partialTranscriptionTimer?.invalidate()
-        partialTranscriptionTimer = nil
-        currentRecordingUtteranceID = nil
-        currentRecordingMode = nil
-        lastObservedPartialTranscript = nil
-    }
-
-    private func applyLiveCLIInsertion(_ partialText: String, mode: DictationMode) async {
-        guard shellState.autoInsertEnabled, mode == .terminal else {
-            return
-        }
-
-        switch LiveCLIInsertionPlanner.plan(
-            previousCommittedText: liveCLICommittedText,
-            previousObservedTranscript: lastObservedPartialTranscript,
-            nextObservedTranscript: partialText
-        ) {
-        case .insert(let textToAppend, let committedText):
-            guard !textToAppend.isEmpty else {
-                liveCLICommittedText = committedText
-                lastObservedPartialTranscript = partialText
-                return
-            }
-            let result = await insertionEngine.insertTextFragment(textToAppend)
-            if result.success {
-                liveCLICommittedText = committedText
-            }
-            lastObservedPartialTranscript = partialText
-        case .noChange(let committedText):
-            liveCLICommittedText = committedText
-            lastObservedPartialTranscript = partialText
-        }
-    }
-
     private func insertFinalTranscript(_ finalText: String, mode: DictationMode) async -> InsertionResult {
         guard shellState.autoInsertEnabled else {
             return InsertionResult(
@@ -335,31 +248,6 @@ final class DictationCoordinator {
             )
         }
 
-        guard mode == .terminal, !liveCLICommittedText.isEmpty else {
-            return await insertionEngine.insertText(finalText)
-        }
-
-        guard finalText.hasPrefix(liveCLICommittedText) else {
-            return await insertionEngine.insertText(finalText)
-        }
-
-        let appendStart = finalText.index(finalText.startIndex, offsetBy: liveCLICommittedText.count)
-        let finalSuffix = String(finalText[appendStart...])
-        guard !finalSuffix.isEmpty else {
-            return InsertionResult(
-                success: true,
-                strategy: .pasteViaClipboard,
-                targetAppBundleId: nil,
-                targetAppName: nil,
-                errorMessage: nil,
-                insertedTextPreview: finalText
-            )
-        }
-
-        let result = await insertionEngine.insertTextFragment(finalSuffix)
-        if result.success {
-            liveCLICommittedText = finalText
-        }
-        return result
+        return await insertionEngine.insertText(finalText)
     }
 }

@@ -252,56 +252,6 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
         await insertText(text, asFragment: false, requireTerminalTarget: false)
     }
 
-    /// Insert live text into a terminal target while recording.
-    /// This preserves leading whitespace in the fragment so incremental updates
-    /// can continue the current shell line naturally.
-    public func insertTextFragment(_ text: String) async -> InsertionResult {
-        await insertText(text, asFragment: true, requireTerminalTarget: true)
-    }
-
-    /// Replace the currently live-inserted terminal fragment with a newer
-    /// partial transcript while the user is still holding push-to-talk.
-    public func replaceTextFragment(previousText: String, nextText: String) async -> InsertionResult {
-        guard !nextText.isEmpty else {
-            return await insertText(previousText, asFragment: true, requireTerminalTarget: true)
-        }
-
-        guard let target = currentInsertionTarget() else {
-            let result = InsertionResult(
-                success: false,
-                strategy: .notAvailable,
-                targetAppBundleId: nil,
-                targetAppName: nil,
-                errorMessage: "No frontmost application found.",
-                insertedTextPreview: textPreview(nextText)
-            )
-            state = .failed(result.errorMessage!)
-            return result
-        }
-
-        guard target.appType == .terminal else {
-            let result = InsertionResult(
-                success: false,
-                strategy: .notAvailable,
-                targetAppBundleId: target.bundleId,
-                targetAppName: target.appName,
-                errorMessage: "Live replacement is only supported for terminal targets.",
-                insertedTextPreview: textPreview(nextText)
-            )
-            state = .failed(result.errorMessage!)
-            return result
-        }
-
-        return await insertViaPaste(
-            nextText,
-            appBundleId: target.bundleId,
-            appName: target.appName,
-            appType: target.appType,
-            asFragment: true,
-            replacingPreviousText: previousText
-        )
-    }
-
     private func insertText(_ text: String, asFragment: Bool, requireTerminalTarget: Bool) async -> InsertionResult {
         guard !text.isEmpty else {
             let result = InsertionResult(
@@ -575,8 +525,7 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
         appBundleId: String,
         appName: String,
         appType: KnownAppType,
-        asFragment: Bool,
-        replacingPreviousText: String? = nil
+        asFragment: Bool
     ) async -> InsertionResult {
         state = .inserting(strategy: .pasteViaClipboard)
 
@@ -587,10 +536,6 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
 
         // Sanitize text based on app type.
         let sanitized = sanitizeForInsertion(text, appType: appType, bundleId: appBundleId, asFragment: asFragment)
-        let sanitizedPreviousText = replacingPreviousText.map {
-            sanitizeForInsertion($0, appType: appType, bundleId: appBundleId, asFragment: true)
-        } ?? ""
-
         // Build the final pasteboard content ONCE, before activation.
         let finalContent: String
         if appType == .terminal && terminalMode(bundleId: appBundleId) == .bracketedPaste {
@@ -626,10 +571,6 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
         } else {
             app.activate(options: .activateIgnoringOtherApps)
             try? await Task.sleep(nanoseconds: Self.appActivationDelayNanoseconds)
-        }
-
-        if !sanitizedPreviousText.isEmpty {
-            simulateDeleteBackward(count: sanitizedPreviousText.utf16.count, using: currentPasteEventTap())
         }
 
         // Simulate Cmd+V after the target app is frontmost so it receives the paste.
@@ -755,19 +696,6 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
         let vKeyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
         vKeyUp?.flags = .maskCommand
         vKeyUp?.post(tap: tap == .session ? .cgSessionEventTap : .cghidEventTap)
-    }
-
-    private func simulateDeleteBackward(count: Int, using tap: PasteEventTap) {
-        guard count > 0 else { return }
-        let source = CGEventSource(stateID: .hidSystemState)
-
-        for _ in 0..<count {
-            let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x33, keyDown: true)
-            keyDown?.post(tap: tap == .session ? .cgSessionEventTap : .cghidEventTap)
-
-            let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x33, keyDown: false)
-            keyUp?.post(tap: tap == .session ? .cgSessionEventTap : .cghidEventTap)
-        }
     }
 
     // MARK: - Helpers

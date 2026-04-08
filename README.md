@@ -7,7 +7,6 @@ Local-first voice tooling, now pivoting toward a native macOS dictation app for 
 - native macOS menu bar app in Swift/SwiftUI for push-to-talk dictation
 - local `faster-whisper` ASR worker using `large-v3`
 - terminal-safe insertion into the focused app without auto-submitting
-- live terminal updates while the user is still holding push-to-talk, including line replacement when partial transcripts improve
 - deterministic voice commands for formatting
 - local SQLite snippet history
 - local filesystem storage for utterance artifacts
@@ -98,9 +97,8 @@ The active product reset is a local macOS dictation app:
 3. transcribe locally with `faster-whisper + large-v3`
 4. clean the transcript for `Terminal` or `Writing` mode
 5. apply deterministic spoken formatting commands
-6. in terminal mode, append live partial text into the focused CLI while recording
-7. insert only the remaining final text at the focused cursor without pressing Enter
-8. keep local snippet history for copy and resend
+6. insert the final text at the focused cursor without pressing Enter
+7. keep local snippet history for copy and resend
 
 The current native shell now covers Phase 12.1, 12.2, 12.3, and 12.4. It gives us:
 
