@@ -196,6 +196,11 @@ public enum InsertionState: Equatable, Sendable {
 public final class TextInsertionEngine: ObservableObject, Sendable {
     @Published public private(set) var state: InsertionState = .idle
 
+    private enum PasteEventTap {
+        case hid
+        case session
+    }
+
     /// Callback invoked when insertion fails after all retries.
     /// Set by the coordinator to surface errors to the user.
     public var onInsertionFailure: ((String) -> Void)?
@@ -211,8 +216,30 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
     private static let appActivationDelayNanoseconds: UInt64 = 200_000_000
     /// Series 13: reduced from 500ms → 200ms.
     private static let pasteRestoreDelayNanoseconds: UInt64 = 200_000_000
+    /// Use the session tap only for the first paste right after wake.
+    /// Normal insertions should keep using the previously working HID path.
+    private static let postWakeSessionTapWindow: TimeInterval = 15
 
-    public init() {}
+    nonisolated(unsafe) private var workspaceDidWakeObserver: NSObjectProtocol?
+    private var lastWakeDate: Date?
+
+    public init() {
+        workspaceDidWakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.lastWakeDate = Date()
+            }
+        }
+    }
+
+    deinit {
+        if let workspaceDidWakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(workspaceDidWakeObserver)
+        }
+    }
 
     // MARK: - Public API
 
@@ -222,6 +249,10 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
     /// SAFETY: This method NEVER simulates pressing Enter/Return.
     /// The inserted text appears at the cursor and the user must manually submit.
     public func insertText(_ text: String) async -> InsertionResult {
+        await insertText(text, asFragment: false, requireTerminalTarget: false)
+    }
+
+    private func insertText(_ text: String, asFragment: Bool, requireTerminalTarget: Bool) async -> InsertionResult {
         guard !text.isEmpty else {
             let result = InsertionResult(
                 success: false,
@@ -238,7 +269,7 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
 
         state = .detectingTarget
 
-        guard let app = NSWorkspace.shared.frontmostApplication else {
+        guard let target = currentInsertionTarget() else {
             let result = InsertionResult(
                 success: false,
                 strategy: .notAvailable,
@@ -252,26 +283,47 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
             return result
         }
 
-        let bundleId = app.bundleIdentifier ?? ""
-        let appName = app.localizedName ?? bundleId
-        let appType = KnownAppType.classify(bundleId: bundleId)
+        if requireTerminalTarget && target.appType != .terminal {
+            let result = InsertionResult(
+                success: false,
+                strategy: .notAvailable,
+                targetAppBundleId: target.bundleId,
+                targetAppName: target.appName,
+                errorMessage: "Live insertion is only supported for terminal targets.",
+                insertedTextPreview: textPreview(text)
+            )
+            state = .failed(result.errorMessage!)
+            return result
+        }
 
         // Known app types that prefer paste over AX:
         // - Terminals: bracketed/plain paste for safety (Series 9)
         // - Browsers: AX can't reach Shadow DOM textareas (Series 11)
         // - Rich editors: AX is unreliable (Series 11)
-        if appType.prefersPaste {
-            return await insertViaPaste(text, appBundleId: bundleId, appName: appName, appType: appType)
+        if target.appType.prefersPaste || asFragment {
+            return await insertViaPaste(
+                text,
+                appBundleId: target.bundleId,
+                appName: target.appName,
+                appType: target.appType,
+                asFragment: asFragment
+            )
         }
 
         // Try AX text field first for plain text editors and unknown apps.
-        let axResult = await insertViaAccessibility(text, app: app, bundleId: bundleId, appName: appName)
+        let axResult = await insertViaAccessibility(text, app: target.app, bundleId: target.bundleId, appName: target.appName)
         if axResult.success {
             return axResult
         }
 
         // Fall back to clipboard paste.
-        let pasteResult = await insertViaPaste(text, appBundleId: bundleId, appName: appName, appType: appType)
+        let pasteResult = await insertViaPaste(
+            text,
+            appBundleId: target.bundleId,
+            appName: target.appName,
+            appType: target.appType,
+            asFragment: asFragment
+        )
 
         // Surface failure if both AX and paste fail.
         if !pasteResult.success {
@@ -472,7 +524,8 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
         _ text: String,
         appBundleId: String,
         appName: String,
-        appType: KnownAppType
+        appType: KnownAppType,
+        asFragment: Bool
     ) async -> InsertionResult {
         state = .inserting(strategy: .pasteViaClipboard)
 
@@ -482,8 +535,7 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
         let oldContents = pasteboard.string(forType: .string)
 
         // Sanitize text based on app type.
-        let sanitized = sanitizeForInsertion(text, appType: appType, bundleId: appBundleId)
-
+        let sanitized = sanitizeForInsertion(text, appType: appType, bundleId: appBundleId, asFragment: asFragment)
         // Build the final pasteboard content ONCE, before activation.
         let finalContent: String
         if appType == .terminal && terminalMode(bundleId: appBundleId) == .bracketedPaste {
@@ -521,8 +573,8 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
             try? await Task.sleep(nanoseconds: Self.appActivationDelayNanoseconds)
         }
 
-        // Simulate Cmd+V — now the target app is frontmost so it receives the paste.
-        simulateCmdV()
+        // Simulate Cmd+V after the target app is frontmost so it receives the paste.
+        simulateCmdV(using: currentPasteEventTap())
 
         // Safe clipboard restore: only restore if the marker is still present.
         let markerBeforeRestore = pasteboard.string(forType: markerType)
@@ -557,13 +609,13 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
     /// Sanitize dictated text before pasting into the target app.
     /// Series 11: handles terminals, browsers, and rich editors with
     /// app-appropriate rules.
-    private func sanitizeForInsertion(_ text: String, appType: KnownAppType, bundleId: String) -> String {
+    private func sanitizeForInsertion(_ text: String, appType: KnownAppType, bundleId: String, asFragment: Bool) -> String {
         switch appType {
         case .terminal:
-            return sanitizeForTerminal(text, bundleId: bundleId)
+            return sanitizeForTerminal(text, bundleId: bundleId, asFragment: asFragment)
         case .browser, .richEditor, .plainTextEditor, .unknown:
             // No sanitization needed — these app types handle pasted text safely.
-            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return asFragment ? text : text.trimmingCharacters(in: .whitespacesAndNewlines)
         }
     }
 
@@ -577,13 +629,13 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
     ///
     /// - **Bracketed paste mode** (iTerm2, Warp, Kitty): newlines are preserved.
     /// - **Plain paste mode** (Terminal.app, Alacritty): newlines replaced with spaces.
-    @_spi(Testing) public func sanitizeForTerminal(_ text: String, bundleId: String) -> String {
+    @_spi(Testing) public func sanitizeForTerminal(_ text: String, bundleId: String, asFragment: Bool = false) -> String {
         let mode = TerminalAppMode.mode(for: bundleId)
         guard mode != nil else { return text }
-        return sanitizeForTerminal(text, mode: mode)
+        return sanitizeForTerminal(text, mode: mode, asFragment: asFragment)
     }
 
-    private func sanitizeForTerminal(_ text: String, mode: TerminalAppMode?) -> String {
+    private func sanitizeForTerminal(_ text: String, mode: TerminalAppMode?, asFragment: Bool) -> String {
         var result = text
 
         // Always strip ANSI escape sequences (CSI + OSC).
@@ -599,7 +651,7 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
 
         switch mode {
         case .bracketedPaste:
-            return result.trimmingCharacters(in: .whitespacesAndNewlines)
+            return asFragment ? result : result.trimmingCharacters(in: .whitespacesAndNewlines)
         case .plainPaste, .none:
             result = result.replacingOccurrences(of: "\r\n", with: " ")
             result = result.replacingOccurrences(of: "\n", with: " ")
@@ -610,23 +662,40 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
                     in: result, range: range, withTemplate: " "
                 )
             }
-            return result.trimmingCharacters(in: .whitespacesAndNewlines)
+            return asFragment ? result : result.trimmingCharacters(in: .whitespacesAndNewlines)
         }
+    }
+
+    private func currentPasteEventTap() -> PasteEventTap {
+        guard let lastWakeDate else {
+            return .hid
+        }
+
+        let isWithinWakeRecoveryWindow = Date().timeIntervalSince(lastWakeDate) <= Self.postWakeSessionTapWindow
+        guard isWithinWakeRecoveryWindow else {
+            self.lastWakeDate = nil
+            return .hid
+        }
+
+        // Consume the recovery path once, then return to HID for normal operation.
+        self.lastWakeDate = nil
+        return .session
     }
 
     /// Simulate a Cmd+V keystroke.
     /// SAFETY: This method only sends the V key with the Command modifier.
     /// It does NOT send Enter, Return, or any other key.
-    private func simulateCmdV() {
+    ///
+    private func simulateCmdV(using tap: PasteEventTap) {
         let source = CGEventSource(stateID: .hidSystemState)
 
         let vKeyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
         vKeyDown?.flags = .maskCommand
-        vKeyDown?.post(tap: .cghidEventTap)
+        vKeyDown?.post(tap: tap == .session ? .cgSessionEventTap : .cghidEventTap)
 
         let vKeyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
         vKeyUp?.flags = .maskCommand
-        vKeyUp?.post(tap: .cghidEventTap)
+        vKeyUp?.post(tap: tap == .session ? .cgSessionEventTap : .cghidEventTap)
     }
 
     // MARK: - Helpers
@@ -635,5 +704,16 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count > 80 else { return trimmed }
         return "\(trimmed.prefix(80))…"
+    }
+
+    private func currentInsertionTarget() -> (app: NSRunningApplication, bundleId: String, appName: String, appType: KnownAppType)? {
+        guard let app = NSWorkspace.shared.frontmostApplication else {
+            return nil
+        }
+
+        let bundleId = app.bundleIdentifier ?? ""
+        let appName = app.localizedName ?? bundleId
+        let appType = KnownAppType.classify(bundleId: bundleId)
+        return (app, bundleId, appName, appType)
     }
 }
