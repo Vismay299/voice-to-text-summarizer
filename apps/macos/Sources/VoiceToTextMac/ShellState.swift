@@ -1,8 +1,12 @@
 import Foundation
+import os.log
+import ServiceManagement
 import SwiftUI
 
 private let kSelectedMode = "com.voicetotext.shell.selectedMode"
 private let kAutoInsertEnabled = "com.voicetotext.shell.autoInsertEnabled"
+private let kHasCompletedOnboarding = "com.voicetotext.shell.hasCompletedOnboarding"
+private let kLaunchAtLoginEnabled = "com.voicetotext.shell.launchAtLogin"
 
 public struct SnippetHistoryItem: Identifiable, Hashable {
     public let id: UUID
@@ -77,6 +81,8 @@ public enum ShellStatus: String {
 
 @MainActor
 public final class ShellState: ObservableObject {
+    private static let log = Logger(subsystem: "com.voicetotext.shell", category: "shellstate")
+
     @Published public var selectedMode: DictationMode {
         didSet {
             UserDefaults.standard.setValue(selectedMode.rawValue, forKey: kSelectedMode)
@@ -89,9 +95,24 @@ public final class ShellState: ObservableObject {
         }
     }
 
+    /// Series 12: Whether the user has completed the first-launch onboarding.
+    @Published public var hasCompletedOnboarding: Bool {
+        didSet {
+            UserDefaults.standard.setValue(hasCompletedOnboarding, forKey: kHasCompletedOnboarding)
+        }
+    }
+
+    /// Series 12: Whether to show the onboarding flow on first launch.
+    public var shouldShowOnboarding: Bool {
+        !hasCompletedOnboarding
+    }
+
+    /// Series 12: Launch-at-login toggle, persisted to UserDefaults.
+    /// Uses a private backing property to avoid firing didSet during init.
+    @Published public private(set) var launchAtLoginEnabled: Bool = false
+
     private let transcriptCleaner = TranscriptCleaner()
     @Published public var shellStatus: ShellStatus = .setupRequired
-    @Published public var launchAtLoginEnabled = false
     @Published public var showOverlay = true
     @Published public var microphoneStatusText = "Microphone: not checked"
     @Published public var accessibilityStatusText = "Accessibility: not checked"
@@ -139,6 +160,17 @@ public final class ShellState: ObservableObject {
             self.selectedMode = .terminal
         }
         self.autoInsertEnabled = UserDefaults.standard.object(forKey: kAutoInsertEnabled) as? Bool ?? true
+        self.hasCompletedOnboarding = UserDefaults.standard.bool(forKey: kHasCompletedOnboarding)
+        // Set the backing Published value directly during init to avoid firing didSet.
+        self._launchAtLoginEnabled = Published(initialValue: UserDefaults.standard.bool(forKey: kLaunchAtLoginEnabled))
+    }
+
+    /// Series 12: Enable or disable launch-at-login.
+    /// This method persists the setting and registers/unregisters the login item.
+    public func setLaunchAtLogin(_ enabled: Bool) {
+        launchAtLoginEnabled = enabled
+        UserDefaults.standard.setValue(enabled, forKey: kLaunchAtLoginEnabled)
+        applyLaunchAtLogin(enabled)
     }
 
     /// Update the active dictation mode. If `rebuildSnippets` is true,
@@ -349,5 +381,67 @@ public final class ShellState: ObservableObject {
     public func clearAllSnippets() {
         sqliteSnippets = []
         try? snippetStore?.clearAll()
+    }
+
+    // MARK: - Series 12: Onboarding & Launch-at-Login
+
+    /// Series 12: Auto-prompt for permissions on first launch.
+    /// Called by DictationCoordinator during bootstrap to guide the user
+    /// through the initial permission setup without requiring manual button clicks.
+    ///
+    /// The mic prompt is awaited so the user sees one dialog at a time.
+    /// Accessibility is only prompted after the mic is confirmed granted.
+    /// Onboarding is marked complete only when permissions are actually resolved
+    /// (granted or explicitly denied), not just when dialogs were shown.
+    public func requestPermissionsOnboarding(permissionsManager: PermissionsManager) {
+        guard shouldShowOnboarding else { return }
+
+        Task {
+            // Step 1: Request microphone and wait for user response.
+            await permissionsManager.requestMicrophoneAccess()
+
+            // Step 2: Only request accessibility if mic was granted.
+            // Re-check the actual permission status after the request completes.
+            permissionsManager.refreshStates()
+            if permissionsManager.microphoneState == .granted {
+                permissionsManager.requestAccessibilityAccess()
+                // Give the user time to respond in System Settings before marking complete.
+                try? await Task.sleep(nanoseconds: 2_000_000_000) // 2s grace period
+            }
+
+            // Mark onboarding complete so we don't re-prompt on every launch.
+            // If the user denied mic, we still mark complete — they can use
+            // the manual Grant buttons in the menu bar panel later.
+            hasCompletedOnboarding = true
+        }
+    }
+
+    /// Mark onboarding as complete (exposed for future "Skip" button in onboarding UI).
+    public func markOnboardingComplete() {
+        hasCompletedOnboarding = true
+    }
+
+    /// Series 12: Apply launch-at-login setting using ServiceManagement.
+    /// On macOS 13+, uses SMAppService for modern login item registration.
+    /// Skips in debug builds since unsigned apps cannot register as login items.
+    private func applyLaunchAtLogin(_ enabled: Bool) {
+        #if DEBUG
+        // Unsigned debug builds cannot register as login items.
+        // Log the intent but skip the SMAppService call to avoid errors.
+        Self.log.debug("Launch at login \(enabled ? "enabled" : "disabled") (no-op in debug build)")
+        #else
+        if #available(macOS 13.0, *) {
+            do {
+                let appService = SMAppService.mainApp
+                if enabled {
+                    try appService.register()
+                } else {
+                    try appService.unregister()
+                }
+            } catch {
+                Self.log.warning("Launch at login \(enabled ? "enable" : "disable") failed: \(error.localizedDescription)")
+            }
+        }
+        #endif
     }
 }

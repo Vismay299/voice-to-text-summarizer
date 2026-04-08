@@ -11,8 +11,10 @@ public struct SettingsView: View {
         Form {
             Section("Shell") {
                 Toggle("Show floating status overlay", isOn: $shellState.showOverlay)
-                Toggle("Launch at login", isOn: $shellState.launchAtLoginEnabled)
-                    .disabled(true)
+                Toggle("Launch at login", isOn: Binding(
+                    get: { shellState.launchAtLoginEnabled },
+                    set: { shellState.setLaunchAtLogin($0) }
+                ))
             }
 
             Section("Dictation Mode") {
@@ -113,12 +115,6 @@ public struct SettingsView: View {
                         .textSelection(.enabled)
                 }
             }
-
-            Section("Upcoming phases") {
-                Text("Phase 12.7 will insert dictated text into the focused terminal or text field without pressing Enter.")
-            }
-            .font(.callout)
-            .foregroundStyle(.secondary)
 
             Section("Voice Commands") {
                 Text("Say these phrases while dictating to insert special characters or formatting.")

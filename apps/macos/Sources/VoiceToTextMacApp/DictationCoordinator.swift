@@ -70,6 +70,11 @@ final class DictationCoordinator {
 
         loadSnippets()
 
+        // Series 12: Auto-prompt for permissions on first launch.
+        if shellState.shouldShowOnboarding {
+            shellState.requestPermissionsOnboarding(permissionsManager: permissionsManager)
+        }
+
         syncShellState()
     }
 

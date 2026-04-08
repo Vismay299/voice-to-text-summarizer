@@ -520,6 +520,14 @@ Task { @MainActor in
     expect(!KnownAppType.plainTextEditor.prefersPaste, "Plain text editors should not prefer paste")
     expect(!KnownAppType.unknown.prefersPaste, "Unknown apps should not prefer paste (try AX first)")
 
+    // MARK: - Series 12: Polish & Stability Tests
+
+    // TerminalAppMode classification
+    expect(TerminalAppMode.mode(for: "com.apple.Terminal") == .plainPaste, "Terminal.app should be plain paste")
+    expect(TerminalAppMode.mode(for: "com.googlecode.iterm2") == .bracketedPaste, "iTerm2 should be bracketed paste")
+    expect(TerminalAppMode.mode(for: "dev.warp.Warp-Stable") == .bracketedPaste, "Warp should be bracketed paste")
+    expect(TerminalAppMode.mode(for: "com.unknown.App") == nil, "Unknown app should have nil mode")
+
     // MARK: - SnippetStore Tests
 
     let storeTempDir = fileManager.temporaryDirectory
