@@ -550,12 +550,12 @@ These are the next GSD-sized executable phases for the dictation pivot. Each pha
 
 ## Current Focus
 
-Active line: Series 11 (Editor Compatibility) is complete. The MVP core (Phases 12.1–12.9 + 12.4.1, Series 10, Series 11) is fully implemented. Next priority is Series 12: Polish & Stability.
+Active line: Series 12 (Polish & Stability) is complete. The full MVP (Phases 12.1–12.9 + 12.4.1, Series 10–12) is implemented. Next step is real-world validation across all supported app types.
 
 ## Next Up
 
-1. Series 12 (Polish & Stability) — first-launch onboarding, launch-at-login, error UX improvements, remaining review items.
-2. Real-world validation — manual smoke testing across all supported app types (terminals, browsers, text editors, rich editors).
+1. Real-world validation — manual smoke testing across terminals, browsers, text editors, and rich editors.
+2. Series 13 (optional) — address issues found during live testing, expand editor support matrix.
 
 ## Blockers / Open Risks
 
