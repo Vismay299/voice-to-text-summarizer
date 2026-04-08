@@ -11,7 +11,10 @@ public struct SettingsView: View {
         Form {
             Section("Shell") {
                 Toggle("Show floating status overlay", isOn: $shellState.showOverlay)
-                Toggle("Launch at login", isOn: $shellState.launchAtLoginEnabled)
+                Toggle("Launch at login", isOn: Binding(
+                    get: { shellState.launchAtLoginEnabled },
+                    set: { shellState.setLaunchAtLogin($0) }
+                ))
             }
 
             Section("Dictation Mode") {
