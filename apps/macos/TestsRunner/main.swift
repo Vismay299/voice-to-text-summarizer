@@ -528,6 +528,31 @@ Task { @MainActor in
     expect(TerminalAppMode.mode(for: "dev.warp.Warp-Stable") == .bracketedPaste, "Warp should be bracketed paste")
     expect(TerminalAppMode.mode(for: "com.unknown.App") == nil, "Unknown app should have nil mode")
 
+    // MARK: - Series 13: Latency Optimization Tests
+
+    // Persistent worker bridge can be instantiated
+    let bridgeResult: Bool
+    do {
+        let bridge = try PythonLargeV3TranscriptionBridge()
+        bridgeResult = true
+        // Verify workerIsReady is false before startWorker
+        expect(!bridge.workerIsReady, "Worker should not be ready before startWorker()")
+        // Stop is safe to call even when not started
+        bridge.stopWorker()
+    } catch {
+        bridgeResult = false
+    }
+    expect(bridgeResult, "PythonLargeV3TranscriptionBridge should instantiate without error")
+
+    // Verify new error cases exist
+    let workerNotReadyErr = TranscriptionBridgeError.workerNotReady
+    expect(workerNotReadyErr.errorDescription?.contains("not finished loading") == true,
+           "workerNotReady should have descriptive message")
+
+    let workerCrashedErr = TranscriptionBridgeError.workerCrashed("test crash")
+    expect(workerCrashedErr.errorDescription?.contains("test crash") == true,
+           "workerCrashed should include the reason")
+
     // MARK: - SnippetStore Tests
 
     let storeTempDir = fileManager.temporaryDirectory

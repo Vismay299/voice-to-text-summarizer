@@ -548,14 +548,24 @@ These are the next GSD-sized executable phases for the dictation pivot. Each pha
 - Why now: history is part of the agreed MVP and improves trust.
 - Definition of done: recent snippets are queryable locally and can be copied or reinserted.
 
+### Series 13: Latency Optimization
+- Goal: reduce end-to-end dictation latency from ~3.5s to ~2.8–3.0s per utterance.
+- Why now: the MVP is feature-complete; the biggest remaining UX gap is perceived speed. The ~2.6s MLX inference is the hard floor — everything else is avoidable overhead.
+- Definition of done: persistent Python process with preloaded model, reduced insertion delays, and skip-activation-if-frontmost logic.
+- Key changes:
+  1. **Persistent Python process** — keep a long-running Python interpreter that preloads the mlx-whisper model once at app startup. Send audio paths over stdin/stdout IPC instead of spawning a new process per utterance. Saves ~200–500ms per call (process spawn + import + model load).
+  2. **Model preload at launch** — trigger a warmup transcription (or bare `import mlx_whisper`) during app init so the model is hot in GPU memory before the first dictation.
+  3. **Reduce insertion delays** — profile and lower the 500ms clipboard-restore delay to ~150–200ms; skip the 200ms app-activation delay when the target app is already frontmost.
+  4. **Parallel transcription queue** (stretch) — allow concurrent GPU inference in `UtteranceTranscriptionService` so back-to-back utterances don't wait serially.
+
 ## Current Focus
 
-Active line: Series 12 (Polish & Stability) is complete. The full MVP (Phases 12.1–12.9 + 12.4.1, Series 10–12) is implemented. Next step is real-world validation across all supported app types.
+Active line: Series 13 (Latency Optimization) is complete. The full MVP (Phases 12.1–12.9 + 12.4.1, Series 10–13) is implemented. Next step is real-world validation across all supported app types.
 
 ## Next Up
 
 1. Real-world validation — manual smoke testing across terminals, browsers, text editors, and rich editors.
-2. Series 13 (optional) — address issues found during live testing, expand editor support matrix.
+2. Series 14 (optional) — address issues found during live testing, expand editor support matrix.
 
 ## Blockers / Open Risks
 
@@ -597,6 +607,7 @@ Active line: Series 12 (Polish & Stability) is complete. The full MVP (Phases 12
 - 2026-04-06: Phase 12.8 is complete with SQLite-backed snippet history (`SnippetStore` with persistent connection, thread-safe serial queue), per-snippet insertion tracking (target app, success/failure), Copy/Resend/Delete UI actions, and 18 test assertions.
 - 2026-04-06: Phase 12.4.1 benchmark decision: `mlx-whisper` on GPU is locked as the `large-v3` ASR runtime. It wins over `faster-whisper` on CPU across all metrics: 102s vs 105s total, 84.2% vs 82.8% confidence, and leaves the CPU free for app/UI work. The `mlx-community/whisper-large-v3-mlx` model is the target. The turbo variant (`large-v3-turbo`) at 2.6s on mlx remains a future escape hatch if latency becomes a concern.
 - 2026-04-06: ASR runtime switched to `mlx-community/whisper-large-v3-turbo`. Turbo is 2.6s vs 102s for full large-v3 (~40x faster) with essentially identical confidence (84.1% vs 84.2%). The original accuracy-first decision for `large-v3` is overridden because turbo delivers the same accuracy at a usable latency.
+- 2026-04-07: Series 13 latency optimization: persistent Python worker replaces per-utterance process spawn, model preloads at app startup via warmup transcription, insertion delays reduced (focus 50→10ms, clipboard restore 500→200ms), skip-activation-if-frontmost shortcut added.
 
 ## Session Restart Notes
 

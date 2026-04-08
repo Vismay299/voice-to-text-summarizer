@@ -206,9 +206,11 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
     private static let bracketedPasteStart = "\u{001B}[200~"
     private static let bracketedPasteEnd = "\u{001B}[201~"
 
-    private static let focusDelayNanoseconds: UInt64 = 50_000_000
+    /// Series 13: reduced from 50ms → 10ms.
+    private static let focusDelayNanoseconds: UInt64 = 10_000_000
     private static let appActivationDelayNanoseconds: UInt64 = 200_000_000
-    private static let pasteRestoreDelayNanoseconds: UInt64 = 500_000_000
+    /// Series 13: reduced from 500ms → 200ms.
+    private static let pasteRestoreDelayNanoseconds: UInt64 = 200_000_000
 
     public init() {}
 
@@ -511,9 +513,13 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
             return result
         }
 
-        app.activate(options: .activateIgnoringOtherApps)
-
-        try? await Task.sleep(nanoseconds: Self.appActivationDelayNanoseconds)
+        // Series 13: skip activation delay if the target app is already frontmost.
+        if app.isActive {
+            Self.log.debug("Target app already frontmost — skipping activation delay")
+        } else {
+            app.activate(options: .activateIgnoringOtherApps)
+            try? await Task.sleep(nanoseconds: Self.appActivationDelayNanoseconds)
+        }
 
         // Simulate Cmd+V — now the target app is frontmost so it receives the paste.
         simulateCmdV()

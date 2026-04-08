@@ -75,6 +75,12 @@ final class DictationCoordinator {
             shellState.requestPermissionsOnboarding(permissionsManager: permissionsManager)
         }
 
+        // Series 13: Start the persistent transcription worker in the background.
+        // Model preload happens here so the first dictation doesn't pay startup cost.
+        Task {
+            await transcriptionService.startWorker()
+        }
+
         syncShellState()
     }
 

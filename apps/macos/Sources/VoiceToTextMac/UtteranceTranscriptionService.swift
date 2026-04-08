@@ -33,6 +33,21 @@ public final class UtteranceTranscriptionService: ObservableObject {
         self.commandParser = commandParser
     }
 
+    /// Series 13: Start the persistent transcription worker (model preload).
+    /// Call once at app startup to eliminate per-utterance process spawn overhead.
+    public func startWorker() async {
+        if let persistent = bridge as? PythonLargeV3TranscriptionBridge {
+            try? await persistent.startWorker()
+        }
+    }
+
+    /// Series 13: Stop the persistent transcription worker.
+    public func stopWorker() {
+        if let persistent = bridge as? PythonLargeV3TranscriptionBridge {
+            persistent.stopWorker()
+        }
+    }
+
     public func bootstrap() {
         do {
             recentTranscriptions = try store.loadRecent(limit: 12)
