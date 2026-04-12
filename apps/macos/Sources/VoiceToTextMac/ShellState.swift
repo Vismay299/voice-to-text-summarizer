@@ -3,10 +3,10 @@ import os.log
 import ServiceManagement
 import SwiftUI
 
-private let kSelectedMode = "com.voicetotext.shell.selectedMode"
-private let kAutoInsertEnabled = "com.voicetotext.shell.autoInsertEnabled"
-private let kHasCompletedOnboarding = "com.voicetotext.shell.hasCompletedOnboarding"
-private let kLaunchAtLoginEnabled = "com.voicetotext.shell.launchAtLogin"
+private let kSelectedMode = "com.speakflow.app.selectedMode"
+private let kAutoInsertEnabled = "com.speakflow.app.autoInsertEnabled"
+private let kHasCompletedOnboarding = "com.speakflow.app.hasCompletedOnboarding"
+private let kLaunchAtLoginEnabled = "com.speakflow.app.launchAtLogin"
 
 public struct SnippetHistoryItem: Identifiable, Hashable {
     public let id: UUID
@@ -81,7 +81,7 @@ public enum ShellStatus: String {
 
 @MainActor
 public final class ShellState: ObservableObject {
-    private static let log = Logger(subsystem: "com.voicetotext.shell", category: "shellstate")
+    private static let log = Logger(subsystem: "com.speakflow.app", category: "shellstate")
 
     @Published public var selectedMode: DictationMode {
         didSet {

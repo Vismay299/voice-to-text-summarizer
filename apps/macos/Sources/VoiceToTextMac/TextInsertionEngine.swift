@@ -205,7 +205,7 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
     /// Set by the coordinator to surface errors to the user.
     public var onInsertionFailure: ((String) -> Void)?
 
-    private static let log = Logger(subsystem: "com.voicetotext.shell", category: "insertion")
+    private static let log = Logger(subsystem: "com.speakflow.shell", category: "insertion")
 
     /// ANSI escape sequence markers for bracketed paste.
     private static let bracketedPasteStart = "\u{001B}[200~"
@@ -547,7 +547,7 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
         pasteboard.clearContents()
         pasteboard.setString(finalContent, forType: .string)
 
-        let markerType = NSPasteboard.PasteboardType("com.voicetotext.insertion-marker")
+        let markerType = NSPasteboard.PasteboardType("com.speakflow.insertion-marker")
         pasteboard.setString(UUID().uuidString, forType: markerType)
 
         // Activate the target app FIRST, then send Cmd+V.

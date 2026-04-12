@@ -5,7 +5,7 @@ import VoiceToTextMac
 
 @MainActor
 final class DictationCoordinator {
-    private static let log = Logger(subsystem: "com.voicetotext.shell", category: "coordinator")
+    private static let log = Logger(subsystem: "com.speakflow.shell", category: "coordinator")
     private let shellState: ShellState
     private let permissionsManager: PermissionsManager
     private let hotkeyMonitor: HotkeyMonitor

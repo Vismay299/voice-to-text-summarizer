@@ -4,7 +4,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP_NAME="VoiceToText"
+APP_NAME="SpeakFlow"
 APP_PATH="${REPO_ROOT}/dist/${APP_NAME}.app"
 DIST_DIR="${REPO_ROOT}/dist"
 

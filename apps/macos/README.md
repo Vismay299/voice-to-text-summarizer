@@ -1,4 +1,4 @@
-# VoiceToTextMac
+# SpeakFlowMac
 
 Native macOS shell scaffold for the local dictation app.
 
@@ -32,7 +32,7 @@ Then run the app:
 
 ```bash
 cd apps/macos
-swift run VoiceToTextMac
+swift run SpeakFlowMac
 ```
 
 ## Build
@@ -46,17 +46,17 @@ swift build
 
 ```bash
 cd apps/macos
-swift run VoiceToTextMacTestRunner
+swift run SpeakFlowMacTestRunner
 ```
 
 Optional best-effort smoke:
 
 ```bash
-VOICE_TO_TEXT_MACOS_SMOKE_CAPTURE=1 swift run VoiceToTextMacTestRunner
+VOICE_TO_TEXT_MACOS_SMOKE_CAPTURE=1 swift run SpeakFlowMacTestRunner
 ```
 
 ```bash
-VOICE_TO_TEXT_MACOS_SMOKE_TRANSCRIBE=1 swift run VoiceToTextMacTestRunner
+VOICE_TO_TEXT_MACOS_SMOKE_TRANSCRIBE=1 swift run SpeakFlowMacTestRunner
 ```
 
 `VOICE_TO_TEXT_MACOS_SMOKE_CAPTURE=1` uses the live microphone path. `VOICE_TO_TEXT_MACOS_SMOKE_TRANSCRIBE=1` generates a spoken sample with macOS `say`, routes it through the bundled Python bridge, and verifies a real `large-v3` local transcript.

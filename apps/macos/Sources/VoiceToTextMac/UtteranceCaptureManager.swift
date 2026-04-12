@@ -106,7 +106,7 @@ public final class UtteranceCaptureManager: ObservableObject {
 
     public func currentRecordingURL() throws -> URL {
         guard let url = activeRecordingURL else {
-            throw NSError(domain: "com.voicetotext.capture", code: 1, userInfo: [NSLocalizedDescriptionKey: "No active recording."])
+            throw NSError(domain: "com.speakflow.capture", code: 1, userInfo: [NSLocalizedDescriptionKey: "No active recording."])
         }
         return url
     }

@@ -57,12 +57,12 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
     private let legacyScriptURL: URL
     private let modelIdentifier: String
     private let language: String
-    private static let log = Logger(subsystem: "com.voicetotext.shell", category: "transcription-bridge")
+    private static let log = Logger(subsystem: "com.speakflow.shell", category: "transcription-bridge")
 
     /// The persistent worker process.
     /// Series 13 Review Fix: Replace NSLock with a serial dispatch queue
     /// because Swift 6 forbids NSLock.lock() from async contexts.
-    private let stateQueue = DispatchQueue(label: "com.voicetotext.worker-state", qos: .userInitiated)
+    private let stateQueue = DispatchQueue(label: "com.speakflow.worker-state", qos: .userInitiated)
     private let requestGate = WorkerRequestGate()
     private nonisolated(unsafe) var workerProcess: Process?
     private nonisolated(unsafe) var workerStdin: FileHandle?

@@ -4,7 +4,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP_NAME="VoiceToText"
+APP_NAME="SpeakFlow"
 BUILD_DIR="${REPO_ROOT}/apps/macos/.build/arm64-apple-macosx/release"
 APP_OUT="${REPO_ROOT}/dist/${APP_NAME}.app"
 CONTENTS="${APP_OUT}/Contents"
@@ -41,7 +41,7 @@ cat > "${RSBUNDLE}/Info.plist" <<'PLIST'
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.voice.dictation.resources</string>
+    <string>com.speakflow.app.resources</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>CFBundlePackageType</key>

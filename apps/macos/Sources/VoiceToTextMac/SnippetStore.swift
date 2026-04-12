@@ -95,9 +95,9 @@ public enum SnippetStoreError: Error, LocalizedError {
 /// Thread-safe via a serial dispatch queue with a persistent connection.
 public final class SnippetStore: Sendable {
     private let dbPath: String
-    private let queue = DispatchQueue(label: "com.voicetotext.snippetstore", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "com.speakflow.snippetstore", qos: .userInitiated)
     private nonisolated(unsafe) var db: OpaquePointer?
-    private static let log = Logger(subsystem: "com.voicetotext.shell", category: "snippetstore")
+    private static let log = Logger(subsystem: "com.speakflow.app", category: "snippetstore")
 
     /// SQLITE_TRANSIENT tells SQLite to copy the string immediately.
     /// Required because Swift String memory is managed and may be deallocated.
@@ -111,7 +111,7 @@ public final class SnippetStore: Sendable {
             dirURL = FileManager.default.urls(
                 for: .applicationSupportDirectory,
                 in: .userDomainMask
-            ).first!.appendingPathComponent("VoiceToTextMac")
+            ).first!.appendingPathComponent("SpeakFlow")
         }
         // Fix #9: Throw on directory creation failure instead of silently ignoring.
         do {

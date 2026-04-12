@@ -3,7 +3,7 @@ import Foundation
 public final class TranscribedUtteranceStore {
     private let fileManager: FileManager
     private let baseDirectoryURL: URL?
-    private let appDirectoryName = "VoiceToTextMac"
+    private let appDirectoryName = "SpeakFlow"
     private let utterancesDirectoryName = "utterances"
 
     public init(fileManager: FileManager = .default, baseDirectoryURL: URL? = nil) {

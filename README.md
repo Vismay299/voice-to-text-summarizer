@@ -1,4 +1,4 @@
-# VoiceToText
+# SpeakFlow
 
 **Push-to-talk dictation for your Mac. Fully local. No cloud. No subscription.**
 
@@ -8,7 +8,7 @@ Hold a hotkey, speak, release — your words appear wherever your cursor is. Ter
 
 ## Download
 
-**[Download VoiceToText-0.1.0.dmg](https://github.com/Vismay299/voice-to-text-summarizer/releases/latest)**
+**[Download SpeakFlow-0.1.0.dmg](https://github.com/Vismay299/voice-to-text-summarizer/releases/latest)**
 
 > Requires macOS 13+ and Apple Silicon (M1 or later).
 
@@ -48,8 +48,8 @@ pip install mlx-whisper
 
 ### Step 2 — Download and open the app
 
-1. Download **VoiceToText-0.1.0.dmg** from [Releases](https://github.com/Vismay299/voice-to-text-summarizer/releases/latest)
-2. Open the DMG and drag **VoiceToText** to your Applications folder
+1. Download **SpeakFlow-0.1.0.dmg** from [Releases](https://github.com/Vismay299/voice-to-text-summarizer/releases/latest)
+2. Open the DMG and drag **SpeakFlow** to your Applications folder
 3. **Right-click → Open** on first launch (required for unsigned apps — Apple charges $99/year for notarization, we skip that)
 4. Click **Open** when macOS asks for confirmation
 
@@ -114,7 +114,7 @@ npm run dev:macos
 
 # Or build a .dmg
 npm run build:dmg
-# → dist/VoiceToText-0.1.0.dmg
+# → dist/SpeakFlow-0.1.0.dmg
 ```
 
 **Requirements for building:** Swift 6.2+, Xcode Command Line Tools, Node.js 18+
@@ -124,7 +124,7 @@ npm run build:dmg
 ## Privacy
 
 - All audio is processed locally on your Mac
-- Transcripts are stored in `~/Library/Application Support/VoiceToTextMac/`
+- Transcripts are stored in `~/Library/Application Support/SpeakFlow/`
 - No telemetry, no analytics, no network requests
 - You can delete all data by removing that folder
 
