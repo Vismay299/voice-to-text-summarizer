@@ -50,8 +50,11 @@ pip install mlx-whisper
 
 1. Download **SpeakFlow-0.1.0.dmg** from [Releases](https://github.com/Vismay299/speakflow/releases/latest)
 2. Open the DMG and drag **SpeakFlow** to your Applications folder
-3. **Right-click → Open** on first launch (required for unsigned apps — Apple charges $99/year for notarization, we skip that)
-4. Click **Open** when macOS asks for confirmation
+3. If macOS says **"SpeakFlow is damaged and can't be opened"**, run this once in Terminal:
+   ```bash
+   xattr -cr /Applications/SpeakFlow.app
+   ```
+4. Then open the app normally — it will launch.
 
 ### Step 3 — Grant permissions
 
