@@ -38,31 +38,34 @@ Transcription runs on-device using [mlx-whisper](https://github.com/ml-explore/m
 
 ## Install
 
-### Step 1 — Install the Python transcription engine
+### Option A — Homebrew (recommended)
 
 ```bash
+# 1. Install the Python transcription engine
 pip install mlx-whisper
+
+# 2. Install SpeakFlow
+brew tap vismay299/speakflow
+brew install --cask speakflow
 ```
 
-> First launch downloads the ~800MB `large-v3-turbo` model weights from HuggingFace and caches them locally. Subsequent launches are instant.
+No Gatekeeper warnings. No quarantine flags. Just works.
 
-### Step 2 — Download and open the app
+### Option B — Manual DMG
 
-1. Download **SpeakFlow-0.1.0.dmg** from [Releases](https://github.com/Vismay299/speakflow/releases/latest)
-2. Open the DMG and drag **SpeakFlow** to your Applications folder
-3. If macOS says **"SpeakFlow is damaged and can't be opened"**, run this once in Terminal:
+1. Install the transcription engine: `pip install mlx-whisper`
+2. Download **SpeakFlow-0.1.0.dmg** from [Releases](https://github.com/Vismay299/speakflow/releases/latest)
+3. Open the DMG and drag **SpeakFlow** to Applications
+4. If macOS says **"SpeakFlow is damaged"**, run once in Terminal:
    ```bash
    xattr -cr /Applications/SpeakFlow.app
    ```
-4. Then open the app normally — it will launch.
 
-### Step 3 — Grant permissions
+### After installing
 
-The app will prompt you for:
-- **Microphone** — to capture your voice
-- **Accessibility** — to insert text into other apps
+Grant **Microphone** and **Accessibility** permissions when prompted — both required, both stay local.
 
-Both are required. Both stay local.
+> First launch downloads the ~800MB `large-v3-turbo` model and caches it locally. Subsequent launches are instant.
 
 ---
 
