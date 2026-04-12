@@ -6,13 +6,6 @@ Hold a hotkey, speak, release — your words appear wherever your cursor is. Ter
 
 ---
 
-## Download
-
-**[Download SpeakFlow-0.1.0.dmg](https://github.com/Vismay299/speakflow/releases/latest)**
-
-> Requires macOS 13+ and Apple Silicon (M1 or later).
-
----
 
 ## What it does
 
