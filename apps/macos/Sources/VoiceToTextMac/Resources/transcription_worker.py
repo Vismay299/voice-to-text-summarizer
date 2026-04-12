@@ -99,7 +99,7 @@ def transcribe_audio(audio_path: str, utterance_id: str, model_repo: str, langua
 
     return {
         "utterance_id": utterance_id,
-        "model_identifier": "large-v3",
+        "model_identifier": "large-v3-turbo",
         "language": result.get("language", language),
         "duration_seconds": duration,
         "text": result.get("text", "").strip(),
