@@ -1,70 +1,81 @@
 # Project State
 
-## Project Reference
+## Resume Here
 
-See: .planning/PROJECT.md (updated 2026-03-30)
+Repository: `voice-to-text-summarizer`
+Current branch: `main`
+HEAD: `3205b93` `Merge branch 'feature/series-13-worker-fix-no-live-cli'`
 
-**Core value:** Let the user stay fully present in a call while the product captures the conversation and turns it into useful notes and a clear summary for free.
-**Current focus:** Phase 5 complete - Experimental Google Meet Track
+When resuming, start with:
+1. Read `.planning/ROADMAP.md`
+2. Confirm branch is still `main`
+3. Treat the current shipped baseline as:
+   - worker race fix included
+   - final-only insertion on hotkey release
+   - experimental live CLI insertion not merged
 
-## Current Position
+## Current Product Baseline
 
-Phase: 5 of 5 (Experimental Google Meet Track)
-Plan: 2 of 2 in current phase
-Status: Complete
-Last activity: 2026-03-30 — Completed Phase 5 experimental Google Meet boundary, isolation, docs, and validation
+The repo is now centered on the local macOS dictation app, not the old meeting-summary direction.
 
-Progress: [██████████] 100%
+Stable behavior on `main`:
+- push-to-talk capture
+- persistent Python transcription worker
+- worker concurrency/race fix retained
+- final transcript insertion on release
+- no live CLI insertion during recording
+- local snippet/history persistence
 
-## Performance Metrics
+Known good checks on `main`:
+- `npm run build:macos`
+- `npm run test:macos`
 
-**Velocity:**
-- Total plans completed: 13
-- Average duration: 0 min
-- Total execution time: 0.0 hours
+Current git state when this note was written:
+- `main` is ahead of `origin/main` by 6 commits
+- untracked local folder exists: `.qwen/`
 
-**By Phase:**
+## Important Branches
 
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| 1 | 3 | 0 min | 0 min |
-| 2 | 3 | 0 min | 0 min |
-| 3 | 3 | 0 min | 0 min |
-| 4 | 2 | 0 min | 0 min |
-| 5 | 2 | 0 min | 0 min |
+- `main`
+  Stable merge target. Use this as the baseline for packaging and release work.
 
-**Recent Trend:**
-- Last 5 plans: 0 min, 0 min, 0 min, 0 min, 0 min
-- Trend: Stable
+- `feature/series-13-worker-fix-no-live-cli`
+  Stable Series 13 cleanup branch that was merged into `main`.
 
-## Accumulated Context
+- `feature/series-13-live-cli-insertion`
+  Experimental branch. Do not merge as-is. It explored live CLI insertion and was intentionally left out of the stable merge target.
 
-### Decisions
+- `fix/cgEvent-sleep-wake-tap`
+  Older branch used during debugging. Not the preferred baseline for release work.
 
-Decisions are logged in PROJECT.md Key Decisions table.
-Recent decisions affecting current work:
+## Next Recommended Task
 
-- Initialization: Use a web UI plus desktop companion for the core product path
-- Initialization: Prioritize local open-source inference over paid APIs
-- Initialization: Treat Google Meet as an experimental parallel track
-- Phase 1: Built scaffold, session controls, and runtime selection
-- Phase 2: Added simulated transcript streaming with incremental polling
-- Phase 3: Added live notes, summary orchestration, and local archive persistence
-- Phase 4: Added meeting-helper workflow with desktop/browser fallback and Google Meet compatibility messaging
-- Phase 5: Added a feature-flagged experimental Google Meet boundary with isolated failure handling and developer notes
+Package the macOS app for distribution and prepare a GitHub `v1` release.
 
-### Pending Todos
+Current packaging status:
+- no `.app` bundling pipeline
+- no `.dmg` creation script
+- no GitHub release workflow
+- no signing/notarization setup
 
-None yet.
+Recommended next steps:
+1. Create a release branch from `main`
+2. Add packaging scripts to produce a distributable `.app`
+3. Add a script to create a `.dmg`
+4. Decide between:
+   - quick unsigned tester release
+   - proper signed/notarized public release
+5. Document the release process
+6. Optionally add GitHub Actions for tagged releases
 
-### Blockers/Concerns
+## Explicit Non-Goals For Next Session
 
-- Real-time local inference quality and latency will vary by user hardware
-- Google Meet-specific capabilities remain platform-constrained and intentionally unsupported as a bot flow outside the experimental boundary
-- Session archive is local-only for now and uses a JSON file under `.voice-to-text-summarizer/`
+- Do not continue the experimental live CLI insertion branch unless explicitly requested.
+- Do not use `fix/cgEvent-sleep-wake-tap` as the release baseline.
+- Do not assume Google Docs/browser-rich-editor insertion is reliable.
 
-## Session Continuity
+## Notes
 
-Last session: 2026-03-30 00:00
-Stopped at: Completed Phase 5 experimental Google Meet boundary and docs
-Resume file: None
+- The user tested the experimental live CLI insertion and found it too inconsistent and too slow.
+- The user preferred the branch with the worker fix and final-only insertion.
+- The next conversation should pick up from packaging/release work, not transcription experimentation.
