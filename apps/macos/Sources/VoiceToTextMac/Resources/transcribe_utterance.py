@@ -55,7 +55,7 @@ def transcribe(args: argparse.Namespace) -> dict:
 
     return {
         "utterance_id": args.utterance_id,
-        "model_identifier": "large-v3",
+        "model_identifier": "large-v3-turbo",
         "language": result.get("language", args.language),
         "duration_seconds": duration,
         "text": result.get("text", "").strip(),
