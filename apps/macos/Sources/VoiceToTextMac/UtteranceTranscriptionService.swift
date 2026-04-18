@@ -48,6 +48,16 @@ public final class UtteranceTranscriptionService: ObservableObject {
         }
     }
 
+    /// Warmup ping — runs a silent clip through the model to keep weights
+    /// resident and the GPU context warm. Called on an interval by the
+    /// coordinator to counter macOS App Nap memory compression when the
+    /// app has been idle.
+    public func warmupPing() async {
+        guard let persistent = bridge as? PythonLargeV3TranscriptionBridge else { return }
+        guard activeArtifactID == nil, !isProcessingQueue else { return }
+        try? await persistent.ping()
+    }
+
     public func bootstrap() {
         do {
             recentTranscriptions = try store.loadRecent(limit: 12)

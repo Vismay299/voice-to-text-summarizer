@@ -19,6 +19,15 @@ final class DictationCoordinator {
     private var lastTranscription: TranscribedUtterance?
     private var lastInsertionResult: InsertionResult?
 
+    /// Activity token that prevents macOS App Nap from throttling us + compressing
+    /// the worker's 800MB of model weights while the menu-bar app sits idle.
+    /// Retained for the lifetime of the coordinator.
+    private var appNapActivity: NSObjectProtocol?
+
+    /// Fires every 90s to run a silent clip through the worker, keeping model
+    /// pages hot and the Metal GPU context warm.
+    private var warmupTimer: Timer?
+
     init(
         shellState: ShellState,
         permissionsManager: PermissionsManager,
@@ -80,6 +89,29 @@ final class DictationCoordinator {
         Task {
             await transcriptionService.startWorker()
         }
+
+        // Hold an App Nap assertion so macOS doesn't throttle us or compress
+        // the worker's model weights during idle periods. Without this, the
+        // first dictation after a few minutes idle takes several seconds
+        // because the OS has paged/compressed the 800MB of MLX weights.
+        appNapActivity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
+            reason: "SpeakFlow dictation must respond instantly at any time"
+        )
+
+        // Periodic warmup: run a silent clip through the worker every 90s.
+        // Complements the App Nap assertion by actively touching model pages
+        // and the Metal context so neither can go cold under memory pressure.
+        // Use an unscheduled Timer added only in .common mode so the timer
+        // still fires during UI tracking (menu open, scroll) without being
+        // registered into multiple run loop modes.
+        let timer = Timer(timeInterval: 90, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.transcriptionService.warmupPing()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        warmupTimer = timer
 
         syncShellState()
     }
