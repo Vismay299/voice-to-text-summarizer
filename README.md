@@ -130,3 +130,9 @@ npm run build:dmg
 This is an open-source project. Issues and PRs welcome.
 
 The planning docs live in `.planning/ROADMAP.md` — read that before contributing.
+
+---
+
+## License
+
+SpeakFlow is released under the [MIT License](LICENSE). Copyright © 2026 Vismay Rathod.
