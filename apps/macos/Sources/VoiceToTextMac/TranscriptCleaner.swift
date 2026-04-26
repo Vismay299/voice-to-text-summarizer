@@ -7,6 +7,12 @@ import Foundation
 /// - `Writing` mode: cleans punctuation, removes filler words,
 ///   and makes prose more readable.
 public struct TranscriptCleaner: Sendable {
+    private static let hallucinationBlocklist: Set<String> = [
+        "thanks for watching",
+        "thanks for watching.",
+        "please subscribe",
+        "please subscribe.",
+    ]
 
     public init() {}
 
@@ -14,6 +20,7 @@ public struct TranscriptCleaner: Sendable {
     public func clean(_ rawText: String, mode: DictationMode) -> String {
         let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
+        guard !Self.hallucinationBlocklist.contains(trimmed.lowercased()) else { return "" }
 
         switch mode {
         case .terminal:

@@ -123,7 +123,7 @@ public final class ShellState: ObservableObject {
     @Published public var captureStatusText = "Capture: idle"
     @Published public var captureDetailText = "Hold Right Option to record one utterance once the shell is ready."
     @Published public var transcriptionStatusText = "Transcription: idle"
-    @Published public var transcriptionDetailText = "Captured utterances will be transcribed locally with large-v3-turbo."
+    @Published public var transcriptionDetailText = "Captured utterances will be transcribed locally."
     @Published public var insertionStatusText = "Insertion: idle"
     @Published public var insertionDetailText = "Auto-insert is enabled. Dictated text will appear at your cursor without pressing Enter."
     @Published public var currentInsertionState: InsertionState = .idle
@@ -190,7 +190,7 @@ public final class ShellState: ObservableObject {
     public var statusSummary: String {
         switch currentTranscriptionState {
         case .transcribing(let utteranceID):
-            return "Transcribing utterance \(utteranceID.uuidString.prefix(8)) with large-v3-turbo."
+            return "Transcribing utterance \(utteranceID.uuidString.prefix(8)) with the selected local model."
         case .transcribed(let transcription):
             return "Transcript saved locally. \(transcription.segments.count) segments ready."
         case .partial(let text):
@@ -208,7 +208,7 @@ public final class ShellState: ObservableObject {
         case .finalizing:
             return "Finalizing the utterance and writing the audio artifact to disk."
         case .captured:
-            return "Utterance saved locally. Local large-v3 transcription is queued."
+            return "Utterance saved locally. Local transcription is queued."
         case .failed(let message):
             return message
         case .idle:
@@ -276,10 +276,10 @@ public final class ShellState: ObservableObject {
         switch transcriptionState {
         case .idle:
             transcriptionStatusText = "Transcription: idle"
-            transcriptionDetailText = "Captured utterances will be transcribed locally with large-v3-turbo."
+            transcriptionDetailText = "Captured utterances will be transcribed locally."
         case .transcribing(let utteranceID):
             transcriptionStatusText = "Transcription: transcribing"
-            transcriptionDetailText = "Transcribing utterance \(utteranceID.uuidString.prefix(8)) with large-v3-turbo."
+            transcriptionDetailText = "Transcribing utterance \(utteranceID.uuidString.prefix(8)) with the selected local model."
         case .transcribed(let transcription):
             transcriptionStatusText = "Transcription: saved"
             transcriptionDetailText = "\(transcription.transcriptPreview) • \(transcription.segments.count) segments"

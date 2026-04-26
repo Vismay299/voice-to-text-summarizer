@@ -38,6 +38,42 @@ public enum TranscriptionBridgeError: LocalizedError {
     }
 }
 
+private struct DynamicCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        self.intValue = nil
+    }
+
+    init?(intValue: Int) {
+        self.stringValue = "\(intValue)"
+        self.intValue = intValue
+    }
+}
+
+private struct FlexibleNumericMetrics: Decodable {
+    let values: [String: Double]
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: DynamicCodingKey.self)
+        var decoded: [String: Double] = [:]
+
+        for key in container.allKeys {
+            if let value = try? container.decode(Double.self, forKey: key) {
+                decoded[key.stringValue] = value
+            } else if let value = try? container.decode(Int.self, forKey: key) {
+                decoded[key.stringValue] = Double(value)
+            } else if let value = try? container.decode(Bool.self, forKey: key) {
+                decoded[key.stringValue] = value ? 1 : 0
+            }
+        }
+
+        self.values = decoded
+    }
+}
+
 // MARK: - Persistent Worker Bridge
 
 /// Series 13: Persistent Python transcription worker bridge.
@@ -56,6 +92,8 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
     private let workerScriptURL: URL
     private let legacyScriptURL: URL
     private let modelIdentifier: String
+    private let fastModelIdentifier: String
+    private let modelTier: String
     private let language: String
     private static let log = Logger(subsystem: "com.speakflow.shell", category: "transcription-bridge")
 
@@ -74,6 +112,8 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
         pythonExecutable: String = "/usr/bin/env",
         scriptURL: URL? = nil,
         modelIdentifier: String = "mlx-community/whisper-large-v3-turbo",
+        fastModelIdentifier: String = "mlx-community/whisper-tiny",
+        modelTier: String? = nil,
         language: String = "en"
     ) throws {
         // Resolve the persistent worker script.
@@ -91,8 +131,21 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
         self.pythonExecutable = pythonExecutable
         self.workerScriptURL = workerURL
         self.legacyScriptURL = legacyURL
-        self.modelIdentifier = modelIdentifier
+        self.modelIdentifier = ProcessInfo.processInfo.environment["SPEAKFLOW_QUALITY_MODEL"] ?? modelIdentifier
+        self.fastModelIdentifier = ProcessInfo.processInfo.environment["SPEAKFLOW_FAST_MODEL"] ?? fastModelIdentifier
+        self.modelTier = Self.normalizedModelTier(
+            modelTier ?? ProcessInfo.processInfo.environment["SPEAKFLOW_MODEL_TIER"] ?? "fast"
+        )
         self.language = language
+    }
+
+    private static func normalizedModelTier(_ rawValue: String) -> String {
+        switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "quality", "large", "large-v3", "large-v3-turbo", "final":
+            return "quality"
+        default:
+            return "fast"
+        }
     }
 
     // MARK: - Worker Lifecycle
@@ -100,16 +153,40 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
     /// Start the persistent Python worker and wait for model warmup.
     /// Call this once at app startup (e.g., from DictationCoordinator).
     public func startWorker() async throws {
-        var alreadyRunning: Bool = false
-        stateQueue.sync { alreadyRunning = workerProcess != nil }
-        guard !alreadyRunning else { return }
+        var alreadyRunning = false
+        var alreadyReady = false
+        stateQueue.sync {
+            alreadyRunning = workerProcess != nil
+            alreadyReady = isReady && workerProcess?.isRunning == true
+        }
+
+        if alreadyReady {
+            return
+        }
+
+        if alreadyRunning {
+            Self.log.info("Worker process is already starting; waiting for readiness...")
+            if await waitForWorkerReady() {
+                return
+            }
+
+            var stillRunning = false
+            stateQueue.sync {
+                stillRunning = workerProcess?.isRunning == true
+            }
+            if stillRunning {
+                throw TranscriptionBridgeError.workerNotReady
+            }
+        }
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: pythonExecutable)
         process.arguments = [
             "python3",
             workerScriptURL.path,
-            "--model", modelIdentifier,
+            "--quality-model", modelIdentifier,
+            "--fast-model", fastModelIdentifier,
+            "--default-tier", modelTier,
             "--language", language,
         ]
         let existingPath = ProcessInfo.processInfo.environment["PATH"] ?? ""
@@ -155,9 +232,36 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
         }
 
         let warmupMs = readyJSON["warmup_ms"] as? Int ?? 0
-        Self.log.info("Worker ready (model warmup: \(warmupMs)ms)")
+        let readyTier = readyJSON["model_tier"] as? String ?? self.modelTier
+        let readyModel = readyJSON["model_identifier"] as? String ?? self.modelIdentifier
+        Self.log.info("Worker ready (tier: \(readyTier), model: \(readyModel), warmup: \(warmupMs)ms)")
 
         stateQueue.sync { isReady = true }
+    }
+
+    private func waitForWorkerReady(
+        timeoutNanoseconds: UInt64 = 120_000_000_000,
+        pollNanoseconds: UInt64 = 50_000_000
+    ) async -> Bool {
+        let start = DispatchTime.now().uptimeNanoseconds
+
+        while DispatchTime.now().uptimeNanoseconds - start < timeoutNanoseconds {
+            if workerIsReady {
+                return true
+            }
+
+            var stillRunning = false
+            stateQueue.sync {
+                stillRunning = workerProcess?.isRunning == true
+            }
+            if !stillRunning {
+                return false
+            }
+
+            try? await Task.sleep(nanoseconds: pollNanoseconds)
+        }
+
+        return workerIsReady
     }
 
     /// Stop the persistent worker. Safe to call multiple times.
@@ -214,9 +318,11 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
             throw TranscriptionBridgeError.workerNotReady
         }
 
-        let request: [String: String] = [
+        let request: [String: Any] = [
             "input": artifact.fileURL.path,
             "utterance_id": artifact.id.uuidString,
+            "fast_text": true,
+            "model_tier": modelTier,
         ]
 
         guard let requestData = try? JSONSerialization.data(withJSONObject: request),
@@ -286,7 +392,7 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
             throw TranscriptionBridgeError.workerNotReady
         }
 
-        let requestLine = "{\"ping\":true}\n"
+        let requestLine = "{\"ping\":true,\"model_tier\":\"\(modelTier)\"}\n"
         var stdin: FileHandle?
         stateQueue.sync { stdin = workerStdin }
         guard let stdin, let data = requestLine.data(using: .utf8) else {
@@ -327,8 +433,9 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
                     return
                 }
 
-                // Read byte-by-byte until newline. This is simple and correct
-                // for line-delimited JSON where each response is one line.
+                // Use a one-byte read for pipe-backed stdout. Larger reads can
+                // block waiting for the full requested count even when the
+                // worker has already emitted a short JSON line.
                 let maxLineLength = 10_000_000 // 10 MB safety limit
                 var buffer = Data()
                 while true {
@@ -398,7 +505,8 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
                         text: $0.text,
                         confidence: $0.confidence
                     )
-                }
+                },
+                latencyMetricsMs: payload.timingsMs?.values
             )
         } catch {
             let body = String(decoding: data, as: UTF8.self)
@@ -457,7 +565,7 @@ public struct UnavailableTranscriptionBridge: UtteranceTranscriptionBridging {
     }
 }
 
-private struct PythonTranscriptionResponse: Codable {
+private struct PythonTranscriptionResponse: Decodable {
     struct Segment: Codable {
         let index: Int
         let startSeconds: TimeInterval
@@ -471,4 +579,5 @@ private struct PythonTranscriptionResponse: Codable {
     let durationSeconds: TimeInterval
     let text: String
     let segments: [Segment]
+    let timingsMs: FlexibleNumericMetrics?
 }

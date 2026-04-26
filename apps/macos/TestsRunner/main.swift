@@ -464,6 +464,9 @@ Task { @MainActor in
     let emptyResult = cleaner.clean("", mode: .terminal)
     expect(emptyResult == "", "Cleaner should return empty string for empty input: '\(emptyResult)'")
 
+    let hallucinatedThanks = cleaner.clean("Thanks for watching.", mode: .terminal)
+    expect(hallucinatedThanks.isEmpty, "Cleaner should suppress obvious boilerplate hallucination phrases: '\(hallucinatedThanks)'")
+
     // Whitespace-only input
     let wsOnly = cleaner.clean("   \n  ", mode: .terminal)
     expect(wsOnly == "", "Cleaner should return empty string for whitespace-only input: '\(wsOnly)'")

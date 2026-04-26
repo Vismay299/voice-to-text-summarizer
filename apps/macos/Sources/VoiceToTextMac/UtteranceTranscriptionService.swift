@@ -1,7 +1,10 @@
 import Foundation
+import os.log
 
 @MainActor
 public final class UtteranceTranscriptionService: ObservableObject {
+    private static let log = Logger(subsystem: "com.speakflow.shell", category: "transcription-service")
+
     @Published public private(set) var transcriptionState: TranscriptionState = .idle
     @Published public private(set) var recentTranscriptions: [TranscribedUtterance] = []
 
@@ -133,7 +136,9 @@ public final class UtteranceTranscriptionService: ObservableObject {
             transcriptionState = .transcribing(utteranceID: nextArtifact.id)
 
             do {
+                let pipelineStart = Date()
                 let raw = try await bridge.transcribe(nextArtifact)
+                logLatencyMetrics(raw.latencyMetricsMs, artifact: nextArtifact)
                 let cleaned = cleaner.clean(raw.text, mode: mode)
                 let commandResult = commandParser.parse(cleaned)
                 let finalText = commandResult.cleanedText.isEmpty ? nil : commandResult.cleanedText
@@ -153,13 +158,21 @@ public final class UtteranceTranscriptionService: ObservableObject {
                     mode: mode,
                     detectedCommands: commandResult.commands
                 )
-                try store.persist(transcription)
+                let pipelineMs = Date().timeIntervalSince(pipelineStart) * 1000
                 recentTranscriptions.removeAll { $0.id == transcription.id }
                 recentTranscriptions.insert(transcription, at: 0)
                 if recentTranscriptions.count > 12 {
                     recentTranscriptions = Array(recentTranscriptions.prefix(12))
                 }
                 transcriptionState = .transcribed(transcription)
+                await Task.yield()
+
+                do {
+                    try store.persist(transcription)
+                } catch {
+                    Self.log.error("Transcript persistence failed after publish: \(error.localizedDescription)")
+                }
+                Self.log.info("Transcription pipeline completed in \(pipelineMs, format: .fixed(precision: 1))ms before persistence for utterance \(nextArtifact.id.uuidString, privacy: .public)")
             } catch {
                 transcriptionState = .failed(error.localizedDescription)
             }
@@ -180,5 +193,21 @@ public final class UtteranceTranscriptionService: ObservableObject {
         for waiter in waiters {
             waiter.resume()
         }
+    }
+
+    private func logLatencyMetrics(_ metrics: [String: Double]?, artifact: CapturedUtteranceArtifact) {
+        guard let metrics, !metrics.isEmpty else { return }
+
+        let original = metrics["original_duration_ms"] ?? 0
+        let trimmed = metrics["trimmed_duration_ms"] ?? original
+        let trimLead = metrics["trim_leading_ms"] ?? 0
+        let trimTrail = metrics["trim_trailing_ms"] ?? 0
+        let mlx = metrics["mlx_transcribe_ms"] ?? 0
+        let total = metrics["total_worker_ms"] ?? 0
+        let skipped = metrics["silence_skip"] ?? 0
+
+        Self.log.info(
+            "ASR latency utterance=\(artifact.id.uuidString, privacy: .public) original=\(original, format: .fixed(precision: 0))ms trimmed=\(trimmed, format: .fixed(precision: 0))ms lead=\(trimLead, format: .fixed(precision: 0))ms trail=\(trimTrail, format: .fixed(precision: 0))ms mlx=\(mlx, format: .fixed(precision: 0))ms total=\(total, format: .fixed(precision: 0))ms skipped=\(skipped, format: .fixed(precision: 0))"
+        )
     }
 }

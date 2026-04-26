@@ -23,15 +23,23 @@ def parse_args() -> argparse.Namespace:
 
 
 def transcribe(args: argparse.Namespace) -> dict:
-    result = mlx_whisper.transcribe(
-        args.input,
-        path_or_hf_repo=args.model,
-        language=args.language,
-        task="transcribe",
-        temperature=0.0,
-        condition_on_previous_text=False,
-        word_timestamps=False,
-    )
+    options = {
+        "path_or_hf_repo": args.model,
+        "language": args.language,
+        "task": "transcribe",
+        "temperature": 0.0,
+        "condition_on_previous_text": False,
+        "word_timestamps": False,
+        "no_speech_threshold": 0.6,
+        "logprob_threshold": -1.0,
+        "compression_ratio_threshold": 2.4,
+        "without_timestamps": True,
+    }
+    try:
+        result = mlx_whisper.transcribe(args.input, **options)
+    except TypeError:
+        options.pop("without_timestamps", None)
+        result = mlx_whisper.transcribe(args.input, **options)
 
     segments = []
     for i, seg in enumerate(result.get("segments", [])):

@@ -32,19 +32,22 @@ public struct RawTranscriptionResult: Codable, Hashable, Sendable {
     public let durationSeconds: TimeInterval
     public let text: String
     public let segments: [TranscribedUtteranceSegment]
+    public let latencyMetricsMs: [String: Double]?
 
     public init(
         modelIdentifier: String,
         language: String,
         durationSeconds: TimeInterval,
         text: String,
-        segments: [TranscribedUtteranceSegment]
+        segments: [TranscribedUtteranceSegment],
+        latencyMetricsMs: [String: Double]? = nil
     ) {
         self.modelIdentifier = modelIdentifier
         self.language = language
         self.durationSeconds = durationSeconds
         self.text = text
         self.segments = segments
+        self.latencyMetricsMs = latencyMetricsMs
     }
 }
 

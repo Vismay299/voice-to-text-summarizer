@@ -214,6 +214,7 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
     /// Series 13: reduced from 50ms → 10ms.
     private static let focusDelayNanoseconds: UInt64 = 10_000_000
     private static let appActivationDelayNanoseconds: UInt64 = 200_000_000
+    private static let appActivationPollNanoseconds: UInt64 = 10_000_000
     /// Series 13: reduced from 500ms → 200ms.
     private static let pasteRestoreDelayNanoseconds: UInt64 = 200_000_000
     /// Use the session tap only for the first paste right after wake.
@@ -529,7 +530,25 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
     ) async -> InsertionResult {
         state = .inserting(strategy: .pasteViaClipboard)
 
-        try? await Task.sleep(nanoseconds: Self.focusDelayNanoseconds)
+        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: appBundleId).first else {
+            let result = InsertionResult(
+                success: false,
+                strategy: .pasteViaClipboard,
+                targetAppBundleId: appBundleId,
+                targetAppName: appName,
+                errorMessage: "Could not activate target application.",
+                insertedTextPreview: textPreview(text)
+            )
+            state = .failed(result.errorMessage!)
+            onInsertionFailure?(result.errorMessage!)
+            return result
+        }
+
+        if app.isActive {
+            Self.log.debug("Target app already frontmost — skipping focus delay")
+        } else {
+            try? await Task.sleep(nanoseconds: Self.focusDelayNanoseconds)
+        }
 
         let pasteboard = NSPasteboard.general
         let oldContents = pasteboard.string(forType: .string)
@@ -550,27 +569,12 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
         let markerType = NSPasteboard.PasteboardType("com.speakflow.insertion-marker")
         pasteboard.setString(UUID().uuidString, forType: markerType)
 
-        // Activate the target app FIRST, then send Cmd+V.
-        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: appBundleId).first else {
-            let result = InsertionResult(
-                success: false,
-                strategy: .pasteViaClipboard,
-                targetAppBundleId: appBundleId,
-                targetAppName: appName,
-                errorMessage: "Could not activate target application.",
-                insertedTextPreview: textPreview(text)
-            )
-            state = .failed(result.errorMessage!)
-            onInsertionFailure?(result.errorMessage!)
-            return result
-        }
-
         // Series 13: skip activation delay if the target app is already frontmost.
         if app.isActive {
             Self.log.debug("Target app already frontmost — skipping activation delay")
         } else {
             app.activate(options: .activateIgnoringOtherApps)
-            try? await Task.sleep(nanoseconds: Self.appActivationDelayNanoseconds)
+            await waitForActivation(bundleId: appBundleId)
         }
 
         // Simulate Cmd+V after the target app is frontmost so it receives the paste.
@@ -680,6 +684,17 @@ public final class TextInsertionEngine: ObservableObject, Sendable {
         // Consume the recovery path once, then return to HID for normal operation.
         self.lastWakeDate = nil
         return .session
+    }
+
+    private func waitForActivation(bundleId: String) async {
+        let deadline = Date().addingTimeInterval(Double(Self.appActivationDelayNanoseconds) / 1_000_000_000)
+
+        while Date() < deadline {
+            if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundleId {
+                return
+            }
+            try? await Task.sleep(nanoseconds: Self.appActivationPollNanoseconds)
+        }
     }
 
     /// Simulate a Cmd+V keystroke.
