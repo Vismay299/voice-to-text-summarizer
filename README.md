@@ -43,6 +43,21 @@ Grant **Microphone** and **Accessibility** permissions when prompted — both re
 
 > First launch downloads the ~800MB `large-v3-turbo` model and caches it locally. Subsequent launches are instant.
 
+## Update
+
+Instead of deleting the app and reinstalling dependencies by hand, run:
+
+```bash
+npm run update:app
+```
+
+That command:
+
+- downloads the latest `SpeakFlow` DMG from GitHub Releases
+- replaces `/Applications/SpeakFlow.app`
+- installs `mlx-whisper` for your current `python3` if it is missing
+- reopens the app
+
 ---
 
 ## Usage
