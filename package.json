@@ -24,6 +24,7 @@
     "build:macos": "cd apps/macos && swift build",
     "build:app": "bash scripts/build-app.sh",
     "build:dmg": "bash scripts/build-app.sh && bash scripts/build-dmg.sh",
+    "update:app": "bash scripts/update-speakflow.sh",
     "build": "npm run build --workspace @voice/api && npm run build --workspace @voice/asr-worker && npm run build --workspace @voice/summary-worker && npm run build --workspace @voice/companion && npm run build --workspace @voice/web",
     "pretypecheck": "npm run build --workspace @voice/shared",
     "typecheck": "npm run typecheck --workspace @voice/api && npm run typecheck --workspace @voice/asr-worker && npm run typecheck --workspace @voice/summary-worker && npm run typecheck --workspace @voice/companion && npm run typecheck --workspace @voice/web",

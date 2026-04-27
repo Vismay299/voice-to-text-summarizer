@@ -53,6 +53,7 @@ cat > "${RSBUNDLE}/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+xattr -cr "${APP_OUT}"
 codesign --force --deep --sign - "${APP_OUT}"
 
 echo ""
