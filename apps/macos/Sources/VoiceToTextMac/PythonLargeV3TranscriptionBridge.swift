@@ -89,6 +89,7 @@ private struct FlexibleNumericMetrics: Decodable {
 ///   3. `stopWorker()` — closes stdin (triggers clean exit) and waits
 public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridging, @unchecked Sendable {
     private let pythonExecutable: String
+    private let pythonArguments: [String]
     private let workerScriptURL: URL
     private let legacyScriptURL: URL
     private let modelIdentifier: String
@@ -109,7 +110,7 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
     private nonisolated(unsafe) var isReady = false
 
     public init(
-        pythonExecutable: String = "/usr/bin/env",
+        pythonExecutable: String? = nil,
         scriptURL: URL? = nil,
         modelIdentifier: String = "mlx-community/whisper-large-v3-turbo",
         fastModelIdentifier: String = "mlx-community/whisper-tiny",
@@ -128,7 +129,9 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
             throw TranscriptionBridgeError.missingScript
         }
 
-        self.pythonExecutable = pythonExecutable
+        let runtime = Self.resolvePythonRuntime(explicitPythonExecutable: pythonExecutable)
+        self.pythonExecutable = runtime.executable
+        self.pythonArguments = runtime.arguments
         self.workerScriptURL = workerURL
         self.legacyScriptURL = legacyURL
         self.modelIdentifier = ProcessInfo.processInfo.environment["SPEAKFLOW_QUALITY_MODEL"] ?? modelIdentifier
@@ -146,6 +149,36 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
         default:
             return "fast"
         }
+    }
+
+    static func resolvePythonRuntime(explicitPythonExecutable: String? = nil) -> (executable: String, arguments: [String]) {
+        if let explicitPythonExecutable, !explicitPythonExecutable.isEmpty {
+            return normalizePythonRuntime(explicitPythonExecutable)
+        }
+
+        let environment = ProcessInfo.processInfo.environment
+        if let managedPython = environment["SPEAKFLOW_PYTHON"], !managedPython.isEmpty {
+            return normalizePythonRuntime(managedPython)
+        }
+
+        let brewCandidates = [
+            "/opt/homebrew/opt/speakflow/libexec/bin/python3",
+            "/usr/local/opt/speakflow/libexec/bin/python3",
+        ]
+        for candidate in brewCandidates where FileManager.default.isExecutableFile(atPath: candidate) {
+            return (candidate, [])
+        }
+
+        return ("/usr/bin/env", ["python3"])
+    }
+
+    private static func normalizePythonRuntime(_ value: String) -> (executable: String, arguments: [String]) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed == "/usr/bin/env" {
+            return (trimmed, ["python3"])
+        }
+
+        return (trimmed, [])
     }
 
     // MARK: - Worker Lifecycle
@@ -181,8 +214,7 @@ public final class PythonLargeV3TranscriptionBridge: UtteranceTranscriptionBridg
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: pythonExecutable)
-        process.arguments = [
-            "python3",
+        process.arguments = pythonArguments + [
             workerScriptURL.path,
             "--quality-model", modelIdentifier,
             "--fast-model", fastModelIdentifier,

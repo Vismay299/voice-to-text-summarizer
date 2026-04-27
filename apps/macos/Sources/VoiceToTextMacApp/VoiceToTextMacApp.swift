@@ -12,6 +12,7 @@ struct VoiceToTextMacApp: App {
     private let snippetStore: SnippetStore
 
     private let coordinator: DictationCoordinator
+    private let floatingOverlayController: FloatingOverlayController
 
     init() {
         let shellState = ShellState()
@@ -40,6 +41,7 @@ struct VoiceToTextMacApp: App {
             snippetStore: snippetStore
         )
         self.coordinator = coordinator
+        self.floatingOverlayController = FloatingOverlayController(shellState: shellState)
 
         Task { @MainActor in
             coordinator.bootstrapIfNeeded()

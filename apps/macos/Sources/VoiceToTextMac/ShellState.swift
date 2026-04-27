@@ -79,6 +79,11 @@ public enum ShellStatus: String {
     }
 }
 
+public enum FloatingOverlayPhase: Equatable {
+    case recording
+    case processing
+}
+
 @MainActor
 public final class ShellState: ObservableObject {
     private static let log = Logger(subsystem: "com.speakflow.app", category: "shellstate")
@@ -223,6 +228,83 @@ public final class ShellState: ObservableObject {
 
     public var readinessLabel: String {
         shellStatus.rawValue
+    }
+
+    public var isFloatingOverlayVisible: Bool {
+        guard showOverlay else {
+            return false
+        }
+
+        switch currentCaptureState {
+        case .recording, .finalizing:
+            return true
+        case .idle, .captured, .failed:
+            break
+        }
+
+        switch currentTranscriptionState {
+        case .partial, .transcribing:
+            return true
+        case .idle, .transcribed, .failed:
+            return false
+        }
+    }
+
+    public var floatingOverlayPhase: FloatingOverlayPhase {
+        switch currentCaptureState {
+        case .recording:
+            return .recording
+        case .finalizing:
+            return .processing
+        case .idle, .captured, .failed:
+            break
+        }
+
+        switch currentTranscriptionState {
+        case .partial:
+            return .recording
+        case .transcribing, .transcribed, .idle, .failed:
+            return .processing
+        }
+    }
+
+    public var floatingOverlayTitle: String {
+        switch floatingOverlayPhase {
+        case .recording:
+            return "Recording dictation"
+        case .processing:
+            return "Transcribing locally"
+        }
+    }
+
+    public var floatingOverlaySubtitle: String {
+        switch currentCaptureState {
+        case .recording:
+            return "Release \(hotkeyDisplayName) when you're done speaking"
+        case .finalizing:
+            return "Cleaning up the clip and preparing transcription"
+        case .idle, .captured, .failed:
+            break
+        }
+
+        switch currentTranscriptionState {
+        case .partial:
+            return "Live preview updates as you speak"
+        case .transcribing:
+            return "Running on-device Whisper"
+        case .idle, .transcribed, .failed:
+            return "Getting the text ready"
+        }
+    }
+
+    public var floatingOverlayPreviewText: String? {
+        switch currentTranscriptionState {
+        case .partial(let text):
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        case .idle, .transcribing, .transcribed, .failed:
+            return nil
+        }
     }
 
     public func refreshIntegrationState(

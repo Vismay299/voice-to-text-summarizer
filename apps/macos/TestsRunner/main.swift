@@ -731,6 +731,33 @@ Task { @MainActor in
     expect(workerCrashedErr.errorDescription?.contains("test crash") == true,
            "workerCrashed should include the reason")
 
+    let explicitRuntime = PythonLargeV3TranscriptionBridge.resolvePythonRuntime(
+        explicitPythonExecutable: "/tmp/custom-python3"
+    )
+    expect(explicitRuntime.executable == "/tmp/custom-python3", "Explicit Python runtime should be used as-is")
+    expect(explicitRuntime.arguments.isEmpty, "Explicit Python runtime should not add env fallback arguments")
+
+    let defaultRuntime = PythonLargeV3TranscriptionBridge.resolvePythonRuntime()
+    expect(!defaultRuntime.executable.isEmpty, "Default Python runtime should resolve to a usable executable")
+
+    // MARK: - Floating Overlay Tests
+
+    let overlayState = ShellState()
+    overlayState.showOverlay = true
+    overlayState.refreshCaptureState(.recording(utteranceID: UUID()))
+    expect(overlayState.isFloatingOverlayVisible, "Floating overlay should appear while recording.")
+    expect(overlayState.floatingOverlayPhase == .recording, "Recording should use the recording overlay phase.")
+    expect(overlayState.floatingOverlayTitle == "Recording dictation", "Recording overlay should use the recording title.")
+
+    overlayState.refreshTranscriptionState(.partial(partialText: "hello from the microphone"))
+    expect(overlayState.floatingOverlayPreviewText == "hello from the microphone", "Overlay should surface live partial preview text.")
+
+    overlayState.refreshCaptureState(.finalizing(utteranceID: UUID()))
+    expect(overlayState.floatingOverlayPhase == .processing, "Finalizing should switch the overlay into processing mode.")
+
+    overlayState.showOverlay = false
+    expect(!overlayState.isFloatingOverlayVisible, "Overlay visibility should respect the showOverlay toggle.")
+
     // MARK: - SnippetStore Tests
 
     let storeTempDir = fileManager.temporaryDirectory
